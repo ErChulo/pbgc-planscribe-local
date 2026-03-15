@@ -26,7 +26,7 @@ async function run() {
     const cssPath = path.join(distDir, href.replace(/^\//, ""));
     const css = await readFileOrNull(cssPath);
     if (!css) continue;
-    nextHtml = nextHtml.replace(match[0], `<style>${css}</style>`);
+    nextHtml = nextHtml.replace(match[0], () => `<style>${css}</style>`);
     await fs.rm(cssPath, { force: true });
   }
 
@@ -36,7 +36,7 @@ async function run() {
     const jsPath = path.join(distDir, src.replace(/^\//, ""));
     const js = await readFileOrNull(jsPath);
     if (!js) continue;
-    nextHtml = nextHtml.replace(match[0], `<script type="module">${js}</script>`);
+    nextHtml = nextHtml.replace(match[0], () => `<script type="module">${js}</script>`);
     await fs.rm(jsPath, { force: true });
   }
 
