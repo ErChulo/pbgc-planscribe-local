@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import "./App.css";
 import { buildAuditExportPackage } from "./domain/extraction/auditExport";
+import { evaluateExtraction, evaluateRetrieval } from "./domain/eval/retrievalEval";
 import {
   extractStructuredProvisions,
   type StructuredExtraction,
@@ -23,6 +24,12 @@ import { PlanScribeDb } from "./infra/db/indexedDb";
 
 type AsyncState = "idle" | "working";
 type SearchMode = "lexical" | "hybrid";
+
+interface RuntimeDiagnostics {
+  lastImportMs: number;
+  lastSearchMs: number;
+  lastExtractionMs: number;
+}
 
 function formatDate(iso: string): string {
   return new Date(iso).toLocaleString();
@@ -48,6 +55,18 @@ function App() {
   const [extractionErrors, setExtractionErrors] = useState<string[]>([]);
   const [extractionWarnings, setExtractionWarnings] = useState<string[]>([]);
   const [extractionJson, setExtractionJson] = useState("");
+  const [evalSummary, setEvalSummary] = useState<{
+    top1: number;
+    top3: number;
+    top5: number;
+    precision: number;
+    recall: number;
+  } | null>(null);
+  const [diagnostics, setDiagnostics] = useState<RuntimeDiagnostics>({
+    lastImportMs: 0,
+    lastSearchMs: 0,
+    lastExtractionMs: 0,
+  });
   const [state, setState] = useState<AsyncState>("idle");
   const [statusMessage, setStatusMessage] = useState("Ready");
 
@@ -109,6 +128,12 @@ function App() {
               return;
             }
 
+            if (progressEvent.stage === "embedding") {
+              const percent = Math.round((progressEvent.processed / Math.max(progressEvent.total, 1)) * 100);
+              setStatusMessage(`Embedding ${percent}% (${progressEvent.processed}/${progressEvent.total}) for ${file.name}`);
+              return;
+            }
+
             setStatusMessage(
               `Extracting page ${progressEvent.pageNumber}/${progressEvent.totalPages} for ${file.name}...`,
             );
@@ -137,6 +162,8 @@ function App() {
     }
 
     await refreshCorpus();
+    const importElapsed = performance.now() - importStart;
+    setDiagnostics((previous) => ({ ...previous, lastImportMs: importElapsed }));
     setStatusMessage(
       `Import complete. Imported ${importedCount}, skipped ${skippedCount}, failed ${failedCount}.`,
     );
@@ -211,11 +238,14 @@ function App() {
 
   function handleSearchSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const start = performance.now();
     const nextResults =
       searchMode === "hybrid"
         ? hybridSearch(query, chunks, embeddings)
         : lexicalSearch(query, chunks);
+    const elapsed = performance.now() - start;
     setResults(nextResults);
+    setDiagnostics((previous) => ({ ...previous, lastSearchMs: elapsed }));
     setAnswer(null);
     setStatusMessage(
       `${searchMode} search complete. ${nextResults.length} result(s). Embeddings loaded: ${embeddings.length}.`,
@@ -234,6 +264,7 @@ function App() {
   }
 
   async function handleRunExtraction() {
+    const start = performance.now();
     const extracted = extractStructuredProvisions(chunks, embeddings);
     const auditPackage = buildAuditExportPackage({
       extractionResult: extracted,
@@ -265,6 +296,7 @@ function App() {
       new Map(extracted.supportingEvidence.map((evidence) => [evidence.chunkId, evidence])).values(),
     ).slice(0, 25);
     setResults(dedupedEvidence);
+    setDiagnostics((previous) => ({ ...previous, lastExtractionMs: performance.now() - start }));
 
     setStatusMessage(
       `Structured extraction complete. Fields with citations: ${
@@ -331,6 +363,35 @@ function App() {
     );
 
     setStatusMessage("Release bundle JSON exported from latest extraction run.");
+  }
+
+  function handleRunEvalHarness() {
+    if (!extraction) {
+      return;
+    }
+
+    const retrievalMetrics = evaluateRetrieval(
+      results.slice(0, 3).map((result) => ({
+        id: result.chunkId,
+        expectedCitation: result.citation,
+        rankedCitations: results.map((candidate) => candidate.citation),
+      })),
+    );
+    const extractionMetrics = evaluateExtraction(extraction, [
+      { field: "normalRetirementAge", expectedValueContains: "retirement" },
+      { field: "earlyRetirementReduction", expectedValueContains: "retirement" },
+      { field: "vestingSchedule", expectedValueContains: "vesting" },
+    ]);
+
+    setEvalSummary({
+      top1: retrievalMetrics.top1HitRate,
+      top3: retrievalMetrics.top3HitRate,
+      top5: retrievalMetrics.top5HitRate,
+      precision: extractionMetrics.precision,
+      recall: extractionMetrics.recall,
+    });
+
+    setStatusMessage("Evaluation harness metrics computed.");
   }
 
   return (
@@ -564,6 +625,32 @@ function App() {
       </section>
 
       <section className="panel">
+        <h2>Diagnostics</h2>
+        <div className="actions">
+          <button onClick={handleRunEvalHarness} disabled={!extraction || results.length === 0}>
+            Run Eval Harness
+          </button>
+        </div>
+        <p>
+          importMs={diagnostics.lastImportMs.toFixed(1)} | searchMs={diagnostics.lastSearchMs.toFixed(1)} |
+          extractionMs={diagnostics.lastExtractionMs.toFixed(1)}
+        </p>
+        <p>
+          docs={documents.length} pages={allPages.length} ocrPages=
+          {allPages.filter((page) => page.ocrApplied).length} chunks={chunks.length} embeddings={embeddings.length}
+        </p>
+        {evalSummary ? (
+          <p>
+            top1={evalSummary.top1.toFixed(2)} top3={evalSummary.top3.toFixed(2)} top5=
+            {evalSummary.top5.toFixed(2)} precision={evalSummary.precision.toFixed(2)} recall=
+            {evalSummary.recall.toFixed(2)}
+          </p>
+        ) : (
+          <p>Run eval harness to compute retrieval/extraction metrics.</p>
+        )}
+      </section>
+
+      <section className="panel">
         <h2>Documents</h2>
         <div className="panel-actions">
           <button
@@ -626,3 +713,4 @@ function App() {
 }
 
 export default App;
+    const importStart = performance.now();

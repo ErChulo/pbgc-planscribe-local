@@ -72,3 +72,40 @@ export function buildChunkEmbeddings(
     vector: embedTextLocally(chunk.text, dimensions),
   }));
 }
+
+export async function buildChunkEmbeddingsIncremental(
+  chunks: ChunkRecord[],
+  options: {
+    dimensions?: number;
+    batchSize?: number;
+    onProgress?: (progress: { processed: number; total: number }) => void;
+  } = {},
+): Promise<EmbeddingRecord[]> {
+  const dimensions = options.dimensions ?? LOCAL_EMBEDDING_DIMENSIONS;
+  const batchSize = Math.max(1, options.batchSize ?? 64);
+  const embeddings: EmbeddingRecord[] = [];
+
+  for (let start = 0; start < chunks.length; start += batchSize) {
+    const batch = chunks.slice(start, start + batchSize);
+    for (const chunk of batch) {
+      embeddings.push({
+        id: `${chunk.id}-emb-${LOCAL_EMBEDDING_MODEL}`,
+        chunkId: chunk.id,
+        documentId: chunk.documentId,
+        dimensions,
+        model: LOCAL_EMBEDDING_MODEL,
+        vector: embedTextLocally(chunk.text, dimensions),
+      });
+    }
+
+    options.onProgress?.({ processed: Math.min(start + batch.length, chunks.length), total: chunks.length });
+
+    if (start + batch.length < chunks.length) {
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, 0);
+      });
+    }
+  }
+
+  return embeddings;
+}
