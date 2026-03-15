@@ -16,6 +16,7 @@ function App() {
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [chunks, setChunks] = useState<ChunkRecord[]>([]);
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
+  const [highlightedPageNumber, setHighlightedPageNumber] = useState<number | null>(null);
   const [pages, setPages] = useState<PageRecord[]>([]);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
@@ -81,8 +82,19 @@ function App() {
 
   async function handleOpenDocument(documentId: string) {
     setSelectedDocumentId(documentId);
+    setHighlightedPageNumber(null);
     const nextPages = await db.listPagesForDocument(documentId);
     setPages(nextPages);
+  }
+
+  async function handleOpenCitation(result: SearchResult) {
+    setSelectedDocumentId(result.citation.documentId);
+    setHighlightedPageNumber(result.citation.page);
+    const nextPages = await db.listPagesForDocument(result.citation.documentId);
+    setPages(nextPages);
+    setStatusMessage(
+      `Opened citation: doc=${result.citation.documentId} page=${result.citation.page} chunk=${result.citation.chunkId}`,
+    );
   }
 
   async function handleDeleteDocument(documentId: string) {
@@ -91,6 +103,7 @@ function App() {
       await db.deleteDocument(documentId);
       if (selectedDocumentId === documentId) {
         setSelectedDocumentId(null);
+        setHighlightedPageNumber(null);
         setPages([]);
       }
       await refreshCorpus();
@@ -112,6 +125,7 @@ function App() {
     try {
       await db.clearAll();
       setSelectedDocumentId(null);
+      setHighlightedPageNumber(null);
       setPages([]);
       setResults([]);
       await refreshCorpus();
@@ -171,6 +185,14 @@ function App() {
                   score={result.score} | citation: doc={result.citation.documentId} page=
                   {result.citation.page} chunk={result.citation.chunkId}
                 </small>
+                <div className="actions">
+                  <button
+                    onClick={() => void handleOpenCitation(result)}
+                    disabled={state === "working"}
+                  >
+                    Open Citation
+                  </button>
+                </div>
               </article>
             );
           })}
@@ -217,7 +239,10 @@ function App() {
         {selectedDocumentId ? (
           <div className="pages">
             {pages.map((page) => (
-              <article key={page.id}>
+              <article
+                key={page.id}
+                className={page.pageNumber === highlightedPageNumber ? "page-highlight" : undefined}
+              >
                 <h3>Page {page.pageNumber}</h3>
                 <p>{page.text.slice(0, 1500) || "(empty)"}</p>
               </article>
