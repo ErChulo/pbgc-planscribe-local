@@ -8,6 +8,44 @@ import {
 } from "./parsers";
 
 const MIN_CONFIDENCE = 0.35;
+const DEFAULT_TEMPLATE_ID = "core-pension-v1" as const;
+
+export type ExtractionTemplateId = "core-pension-v1" | "core-pension-v2";
+
+interface FieldTemplate {
+  fieldName: keyof StructuredExtraction["fields"];
+  query: string;
+}
+
+interface ExtractionTemplate {
+  id: ExtractionTemplateId;
+  name: string;
+  schemaVersion: string;
+  fields: FieldTemplate[];
+}
+
+const EXTRACTION_TEMPLATES: Record<ExtractionTemplateId, ExtractionTemplate> = {
+  "core-pension-v1": {
+    id: "core-pension-v1",
+    name: "Core Pension v1",
+    schemaVersion: "1.0",
+    fields: [
+      { fieldName: "normalRetirementAge", query: "normal retirement age" },
+      { fieldName: "earlyRetirementReduction", query: "early retirement reduction" },
+      { fieldName: "vestingSchedule", query: "vesting schedule cliff graded vesting" },
+    ],
+  },
+  "core-pension-v2": {
+    id: "core-pension-v2",
+    name: "Core Pension v2",
+    schemaVersion: "1.1",
+    fields: [
+      { fieldName: "normalRetirementAge", query: "normal retirement date age unreduced retirement benefit" },
+      { fieldName: "earlyRetirementReduction", query: "early retirement reduction actuarial reduction factors" },
+      { fieldName: "vestingSchedule", query: "vesting schedule years of service cliff graded" },
+    ],
+  },
+};
 
 export interface ExtractedProvisionField {
   value: string | null;
@@ -19,7 +57,8 @@ export interface ExtractedProvisionField {
 }
 
 export interface StructuredExtraction {
-  schemaVersion: "1.0";
+  schemaVersion: string;
+  templateId: ExtractionTemplateId;
   generatedAt: string;
   fields: {
     normalRetirementAge: ExtractedProvisionField;
@@ -102,11 +141,24 @@ function pickField(
   };
 }
 
+export function listExtractionTemplates(): ExtractionTemplate[] {
+  return Object.values(EXTRACTION_TEMPLATES);
+}
+
+function resolveTemplate(templateId?: ExtractionTemplateId): ExtractionTemplate {
+  return EXTRACTION_TEMPLATES[templateId ?? DEFAULT_TEMPLATE_ID];
+}
+
 export function validateStructuredExtraction(extraction: StructuredExtraction): string[] {
   const errors: string[] = [];
+  const template = EXTRACTION_TEMPLATES[extraction.templateId];
 
-  if (extraction.schemaVersion !== "1.0") {
-    errors.push("schemaVersion must be 1.0");
+  if (!template) {
+    errors.push(`templateId ${extraction.templateId} is not supported`);
+  } else if (extraction.schemaVersion !== template.schemaVersion) {
+    errors.push(
+      `schemaVersion ${extraction.schemaVersion} does not match template ${template.id} (${template.schemaVersion})`,
+    );
   }
 
   const fields = extraction.fields;
@@ -140,43 +192,39 @@ export function validateStructuredExtraction(extraction: StructuredExtraction): 
 export function extractStructuredProvisions(
   chunks: ChunkRecord[],
   embeddings: EmbeddingRecord[],
+  options?: {
+    templateId?: ExtractionTemplateId;
+  },
 ): StructuredExtractionResult {
-  const normalRetirement = pickField("normalRetirementAge", "normal retirement age", chunks, embeddings);
-  const earlyRetirement = pickField("earlyRetirementReduction", "early retirement reduction", chunks, embeddings);
-  const vesting = pickField("vestingSchedule", "vesting schedule cliff graded vesting", chunks, embeddings);
-  const warnings = [normalRetirement.warning, earlyRetirement.warning, vesting.warning].filter(
+  const template = resolveTemplate(options?.templateId);
+  const picks = template.fields.map((fieldTemplate) => ({
+    ...fieldTemplate,
+    picked: pickField(fieldTemplate.fieldName, fieldTemplate.query, chunks, embeddings),
+  }));
+  const warnings = picks.map((pick) => pick.picked.warning).filter(
     (warning): warning is string => Boolean(warning),
   );
 
+  const fields = {
+    normalRetirementAge: picks.find((pick) => pick.fieldName === "normalRetirementAge")!.picked.field,
+    earlyRetirementReduction: picks.find((pick) => pick.fieldName === "earlyRetirementReduction")!.picked.field,
+    vestingSchedule: picks.find((pick) => pick.fieldName === "vestingSchedule")!.picked.field,
+  };
+
   const extraction: StructuredExtraction = {
-    schemaVersion: "1.0",
+    schemaVersion: template.schemaVersion,
+    templateId: template.id,
     generatedAt: new Date().toISOString(),
-    fields: {
-      normalRetirementAge: normalRetirement.field,
-      earlyRetirementReduction: earlyRetirement.field,
-      vestingSchedule: vesting.field,
-    },
+    fields,
   };
 
   const validationErrors = validateStructuredExtraction(extraction);
-  const supportingEvidence = [...normalRetirement.evidence, ...earlyRetirement.evidence, ...vesting.evidence];
-  const fieldTraces: StructuredExtractionResult["fieldTraces"] = [
-    {
-      fieldName: "normalRetirementAge",
-      query: "normal retirement age",
-      evidence: normalRetirement.evidence,
-    },
-    {
-      fieldName: "earlyRetirementReduction",
-      query: "early retirement reduction",
-      evidence: earlyRetirement.evidence,
-    },
-    {
-      fieldName: "vestingSchedule",
-      query: "vesting schedule cliff graded vesting",
-      evidence: vesting.evidence,
-    },
-  ];
+  const supportingEvidence = picks.flatMap((pick) => pick.picked.evidence);
+  const fieldTraces: StructuredExtractionResult["fieldTraces"] = picks.map((pick) => ({
+    fieldName: pick.fieldName,
+    query: pick.query,
+    evidence: pick.picked.evidence,
+  }));
 
   return {
     extraction,
