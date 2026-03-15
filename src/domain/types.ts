@@ -21,6 +21,15 @@ export interface ChunkRecord {
   text: string;
 }
 
+export interface EmbeddingRecord {
+  id: string;
+  chunkId: string;
+  documentId: string;
+  dimensions: number;
+  model: string;
+  vector: number[];
+}
+
 export interface ExtractedPage {
   pageNumber: number;
   text: string;
@@ -38,5 +47,7 @@ export interface SearchResult {
   score: number;
   snippet: string;
   citation: Citation;
+  lexicalScore?: number;
+  vectorScore?: number;
 }
 
