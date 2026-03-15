@@ -6,7 +6,8 @@ const projectRoot = process.cwd();
 const distDir = join(projectRoot, "dist");
 const releaseRoot = join(projectRoot, "release");
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-const releaseDir = join(releaseRoot, `planscribe-local-${stamp}`);
+const releaseDirName = process.env.RELEASE_DIR_NAME || `planscribe-local-${stamp}`;
+const releaseDir = join(releaseRoot, releaseDirName);
 
 if (!existsSync(distDir)) {
   throw new Error("dist/ not found. Run npm run build first.");

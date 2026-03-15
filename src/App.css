@@ -136,6 +136,11 @@ button {
   color: #9a3412;
 }
 
+.history-list {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+}
+
 .pages {
   display: grid;
   gap: 0.75rem;

@@ -14,6 +14,7 @@ import type {
   ChunkRecord,
   DocumentRecord,
   EmbeddingRecord,
+  ExtractionRunRecord,
   PageRecord,
   SearchResult,
 } from "./domain/types";
@@ -36,6 +37,7 @@ function App() {
   const [highlightedPageNumber, setHighlightedPageNumber] = useState<number | null>(null);
   const [allPages, setAllPages] = useState<PageRecord[]>([]);
   const [pages, setPages] = useState<PageRecord[]>([]);
+  const [extractionHistory, setExtractionHistory] = useState<ExtractionRunRecord[]>([]);
   const [query, setQuery] = useState("");
   const [question, setQuestion] = useState("");
   const [searchMode, setSearchMode] = useState<SearchMode>("hybrid");
@@ -55,21 +57,33 @@ function App() {
   );
 
   const refreshCorpus = useCallback(async () => {
-    const [nextDocuments, nextChunks, nextEmbeddings, nextPages] = await Promise.all([
+    const [nextDocuments, nextChunks, nextEmbeddings, nextPages, nextRuns] = await Promise.all([
       db.listDocuments(),
       db.listChunks(),
       db.listEmbeddings(),
       db.listPages(),
+      db.listExtractionRuns(),
     ]);
     setDocuments(nextDocuments);
     setChunks(nextChunks);
     setEmbeddings(nextEmbeddings);
     setAllPages(nextPages);
+    setExtractionHistory(nextRuns);
   }, [db]);
 
   useEffect(() => {
     void refreshCorpus();
   }, [refreshCorpus]);
+
+  function downloadJson(filename: string, payload: unknown) {
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
 
   async function handleImport(event: React.ChangeEvent<HTMLInputElement>) {
     const files = event.target.files;
@@ -86,20 +100,21 @@ function App() {
     for (const file of Array.from(files)) {
       try {
         const summary = await ingestPdfFile(db, file, {
-          onProgress: (event) => {
-            if (event.stage === "ocr_fallback") {
-              const percent = Math.round((event.ocrProgress ?? 0) * 100);
+          onProgress: (progressEvent) => {
+            if (progressEvent.stage === "ocr_fallback") {
+              const percent = Math.round((progressEvent.ocrProgress ?? 0) * 100);
               setStatusMessage(
-                `OCR fallback ${percent}% on page ${event.pageNumber}/${event.totalPages} for ${file.name}`,
+                `OCR fallback ${percent}% on page ${progressEvent.pageNumber}/${progressEvent.totalPages} for ${file.name}`,
               );
               return;
             }
 
             setStatusMessage(
-              `Extracting page ${event.pageNumber}/${event.totalPages} for ${file.name}...`,
+              `Extracting page ${progressEvent.pageNumber}/${progressEvent.totalPages} for ${file.name}...`,
             );
           },
         });
+
         importedCount += 1;
         const importedPages = await db.listPagesForDocument(summary.document.id);
         const ocrCount = importedPages.filter((page) => page.ocrApplied).length;
@@ -168,7 +183,7 @@ function App() {
 
   async function handleClearAll() {
     const confirmed = window.confirm(
-      "Delete all locally stored documents, pages, and chunks from this browser?",
+      "Delete all locally stored documents, pages, chunks, and extraction history from this browser?",
     );
     if (!confirmed) {
       return;
@@ -218,39 +233,55 @@ function App() {
     );
   }
 
-  function handleRunExtraction() {
-    const extractionResult = extractStructuredProvisions(chunks, embeddings);
-    setExtraction(extractionResult.extraction);
-    setExtractionResult(extractionResult);
-    setExtractionErrors(extractionResult.validationErrors);
-    setExtractionWarnings(extractionResult.warnings);
-    setExtractionJson(JSON.stringify(extractionResult.extraction, null, 2));
+  async function handleRunExtraction() {
+    const extracted = extractStructuredProvisions(chunks, embeddings);
+    const auditPackage = buildAuditExportPackage({
+      extractionResult: extracted,
+      documents,
+      pages: allPages,
+      chunkCount: chunks.length,
+      embeddings,
+    });
+
+    setExtraction(extracted.extraction);
+    setExtractionResult(extracted);
+    setExtractionErrors(extracted.validationErrors);
+    setExtractionWarnings(extracted.warnings);
+    setExtractionJson(JSON.stringify(extracted.extraction, null, 2));
+
+    const runRecord: ExtractionRunRecord = {
+      id: crypto.randomUUID(),
+      createdAt: new Date().toISOString(),
+      documentIds: documents.map((document) => document.id),
+      extractionJson: JSON.stringify(extracted.extraction, null, 2),
+      auditJson: JSON.stringify(auditPackage, null, 2),
+      validationErrorCount: extracted.validationErrors.length,
+      warningCount: extracted.warnings.length,
+    };
+    await db.putExtractionRun(runRecord);
+    await refreshCorpus();
 
     const dedupedEvidence = Array.from(
-      new Map(extractionResult.supportingEvidence.map((evidence) => [evidence.chunkId, evidence])).values(),
+      new Map(extracted.supportingEvidence.map((evidence) => [evidence.chunkId, evidence])).values(),
     ).slice(0, 25);
     setResults(dedupedEvidence);
 
     setStatusMessage(
       `Structured extraction complete. Fields with citations: ${
-        Object.values(extractionResult.extraction.fields).filter((field) => field.citation).length
-      }/3. Validation errors: ${extractionResult.validationErrors.length}. Warnings: ${extractionResult.warnings.length}.`,
+        Object.values(extracted.extraction.fields).filter((field) => field.citation).length
+      }/3. Validation errors: ${extracted.validationErrors.length}. Warnings: ${extracted.warnings.length}.`,
     );
   }
 
   function handleExportExtractionJson() {
-    if (!extraction) {
+    if (!extractionResult) {
       return;
     }
 
-    const payload = JSON.stringify(extraction, null, 2);
-    const blob = new Blob([payload], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `planscribe-extraction-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    downloadJson(
+      `planscribe-extraction-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`,
+      extractionResult.extraction,
+    );
 
     setStatusMessage("Extraction JSON exported.");
   }
@@ -268,16 +299,38 @@ function App() {
       embeddings,
     });
 
-    const payload = JSON.stringify(auditPackage, null, 2);
-    const blob = new Blob([payload], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `planscribe-audit-package-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    downloadJson(
+      `planscribe-audit-package-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`,
+      auditPackage,
+    );
 
     setStatusMessage("Audit package exported.");
+  }
+
+  function handleCreateReleaseBundle() {
+    const latest = extractionHistory[0];
+    if (!latest) {
+      return;
+    }
+
+    const bundle = {
+      bundleVersion: "1.0",
+      generatedAt: new Date().toISOString(),
+      runId: latest.id,
+      extraction: JSON.parse(latest.extractionJson),
+      audit: JSON.parse(latest.auditJson),
+      metadata: {
+        validationErrorCount: latest.validationErrorCount,
+        warningCount: latest.warningCount,
+      },
+    };
+
+    downloadJson(
+      `planscribe-release-bundle-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`,
+      bundle,
+    );
+
+    setStatusMessage("Release bundle JSON exported from latest extraction run.");
   }
 
   return (
@@ -374,14 +427,17 @@ function App() {
         <h2>Structured Extraction</h2>
         <p>Extract key provision fields as JSON with explicit citations and schema validation.</p>
         <div className="actions extraction-actions">
-          <button onClick={handleRunExtraction} disabled={state === "working" || chunks.length === 0}>
+          <button onClick={() => void handleRunExtraction()} disabled={state === "working" || chunks.length === 0}>
             Run Extraction
           </button>
-          <button onClick={handleExportExtractionJson} disabled={!extraction}>
+          <button onClick={handleExportExtractionJson} disabled={!extractionResult}>
             Export JSON
           </button>
           <button onClick={handleExportAuditPackage} disabled={!extractionResult}>
             Export Audit Package
+          </button>
+          <button onClick={handleCreateReleaseBundle} disabled={extractionHistory.length === 0}>
+            Create Release Bundle
           </button>
         </div>
         {extraction ? (
@@ -403,7 +459,9 @@ function App() {
                       return null;
                     }
                     return (
-                      <button onClick={() => void handleOpenCitationByRef(citation)}>Open Citation</button>
+                      <button onClick={() => void handleOpenCitationByRef(citation)}>
+                        Open Citation
+                      </button>
                     );
                   })()}
                 </div>
@@ -426,7 +484,9 @@ function App() {
                       return null;
                     }
                     return (
-                      <button onClick={() => void handleOpenCitationByRef(citation)}>Open Citation</button>
+                      <button onClick={() => void handleOpenCitationByRef(citation)}>
+                        Open Citation
+                      </button>
                     );
                   })()}
                 </div>
@@ -449,7 +509,9 @@ function App() {
                       return null;
                     }
                     return (
-                      <button onClick={() => void handleOpenCitationByRef(citation)}>Open Citation</button>
+                      <button onClick={() => void handleOpenCitationByRef(citation)}>
+                        Open Citation
+                      </button>
                     );
                   })()}
                 </div>
@@ -481,6 +543,23 @@ function App() {
           </ul>
         ) : (
           <p>No extraction warnings.</p>
+        )}
+      </section>
+
+      <section className="panel">
+        <h2>Extraction History</h2>
+        {extractionHistory.length === 0 ? (
+          <p>No extraction runs saved yet.</p>
+        ) : (
+          <ul className="history-list">
+            {extractionHistory.map((run) => (
+              <li key={run.id}>
+                <small>
+                  {formatDate(run.createdAt)} | errors={run.validationErrorCount} | warnings={run.warningCount}
+                </small>
+              </li>
+            ))}
+          </ul>
         )}
       </section>
 

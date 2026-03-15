@@ -55,3 +55,13 @@ export interface SearchResult {
   vectorScore?: number;
 }
 
+export interface ExtractionRunRecord {
+  id: string;
+  createdAt: string;
+  documentIds: string[];
+  extractionJson: string;
+  auditJson: string;
+  validationErrorCount: number;
+  warningCount: number;
+}
+
