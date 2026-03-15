@@ -35,8 +35,22 @@ describe("structured extraction", () => {
     const result = extractStructuredProvisions(chunks, embeddings);
 
     expect(result.extraction.fields.normalRetirementAge.citation?.page).toBe(2);
+    expect(result.extraction.fields.normalRetirementAge.status).toBe("extracted");
     expect(result.extraction.fields.earlyRetirementReduction.citation?.page).toBe(4);
+    expect(result.extraction.fields.earlyRetirementReduction.status).toBe("extracted");
     expect(result.extraction.fields.vestingSchedule.citation?.page).toBe(6);
+    expect(result.extraction.fields.vestingSchedule.status).toBe("extracted");
     expect(validateStructuredExtraction(result.extraction)).toEqual([]);
+  });
+
+  it("marks fields as insufficient evidence when confidence is too low", () => {
+    const chunks: ChunkRecord[] = [];
+
+    const embeddings = buildChunkEmbeddings(chunks);
+    const result = extractStructuredProvisions(chunks, embeddings);
+
+    expect(result.extraction.fields.normalRetirementAge.status).toBe("insufficient_evidence");
+    expect(result.extraction.fields.normalRetirementAge.value).toBeNull();
+    expect(result.warnings.length).toBeGreaterThan(0);
   });
 });

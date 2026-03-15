@@ -4,6 +4,8 @@ import type { ExtractedPage } from "../../domain/types";
 
 GlobalWorkerOptions.workerSrc = workerSrc;
 
+const MIN_DIRECT_TEXT_CHARS = 24;
+
 export async function extractPdfPages(pdfData: ArrayBuffer): Promise<ExtractedPage[]> {
   const loadingTask = getDocument({ data: pdfData });
   const pdf = await loadingTask.promise;
@@ -15,10 +17,29 @@ export async function extractPdfPages(pdfData: ArrayBuffer): Promise<ExtractedPa
     const textItems = content.items
       .map((item) => ("str" in item ? item.str : ""))
       .filter(Boolean);
+    const directText = textItems.join(" ").replace(/\s+/g, " ").trim();
+
+    let text = directText;
+    let textSource: ExtractedPage["textSource"] = directText ? "pdf_text" : "empty";
+    let ocrApplied = false;
+
+    if (directText.length < MIN_DIRECT_TEXT_CHARS) {
+      const { extractPageTextWithOcrFallback } = await import("./ocrFallback");
+      const ocrText = await extractPageTextWithOcrFallback(page);
+      if (ocrText) {
+        text = ocrText;
+        textSource = "ocr";
+        ocrApplied = true;
+      } else if (!directText) {
+        textSource = "empty";
+      }
+    }
 
     pages.push({
       pageNumber,
-      text: textItems.join(" "),
+      text,
+      textSource,
+      ocrApplied,
     });
   }
 

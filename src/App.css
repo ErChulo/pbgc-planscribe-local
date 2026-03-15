@@ -130,6 +130,12 @@ button {
   color: #991b1b;
 }
 
+.warnings {
+  margin: 0;
+  padding-left: 1.25rem;
+  color: #9a3412;
+}
+
 .pages {
   display: grid;
   gap: 0.75rem;

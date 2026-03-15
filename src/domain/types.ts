@@ -11,6 +11,8 @@ export interface PageRecord {
   documentId: string;
   pageNumber: number;
   text: string;
+  textSource?: "pdf_text" | "ocr" | "empty";
+  ocrApplied?: boolean;
 }
 
 export interface ChunkRecord {
@@ -33,6 +35,8 @@ export interface EmbeddingRecord {
 export interface ExtractedPage {
   pageNumber: number;
   text: string;
+  textSource?: "pdf_text" | "ocr" | "empty";
+  ocrApplied?: boolean;
 }
 
 export interface Citation {
