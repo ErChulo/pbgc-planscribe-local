@@ -31,6 +31,7 @@ export interface IngestionSummary {
 }
 
 export interface IngestionOptions {
+  workspaceId?: string;
   onProgress?: (event: IngestionProgressEvent) => void;
 }
 
@@ -43,6 +44,7 @@ export type IngestionProgressEvent =
     };
 
 export function buildIngestionArtifacts(input: {
+  workspaceId?: string;
   documentId: string;
   filename: string;
   sha256: string;
@@ -51,6 +53,7 @@ export function buildIngestionArtifacts(input: {
 }): { document: DocumentRecord; pages: PageRecord[]; chunkCount: number } {
   const document: DocumentRecord = {
     id: input.documentId,
+    workspaceId: input.workspaceId ?? "default-workspace",
     filename: input.filename,
     sha256: input.sha256,
     importedAt: input.importedAt ?? new Date().toISOString(),
@@ -59,6 +62,7 @@ export function buildIngestionArtifacts(input: {
 
   const pages: PageRecord[] = input.extractedPages.map((page) => ({
     id: `${input.documentId}-page-${page.pageNumber}`,
+    workspaceId: input.workspaceId ?? "default-workspace",
     documentId: input.documentId,
     pageNumber: page.pageNumber,
     text: normalizeText(page.text),
@@ -82,6 +86,7 @@ export async function ingestPdfFile(
   file: File,
   options: IngestionOptions = {},
 ): Promise<IngestionSummary> {
+  const workspaceId = options.workspaceId ?? "default-workspace";
   const { extractPdfPages } = await import("../../infra/pdf/extract");
   const fileBuffer = await file.arrayBuffer();
   const sha256 = await sha256Hex(fileBuffer);
@@ -95,6 +100,7 @@ export async function ingestPdfFile(
 
   const documentId = crypto.randomUUID();
   const { document, pages, chunkCount } = buildIngestionArtifacts({
+    workspaceId,
     documentId,
     filename: file.name,
     sha256,
@@ -108,13 +114,15 @@ export async function ingestPdfFile(
       text: page.text,
     })),
   );
-  const embeddings = await buildChunkEmbeddingsIncremental(chunks, {
+  const embeddingsWithoutWorkspace = await buildChunkEmbeddingsIncremental(chunks, {
     onProgress: ({ processed, total }) => {
       options.onProgress?.({ stage: "embedding", processed, total });
     },
   });
+  const chunksWithWorkspace = chunks.map((chunk) => ({ ...chunk, workspaceId }));
+  const embeddings = embeddingsWithoutWorkspace.map((embedding) => ({ ...embedding, workspaceId }));
 
-  await db.putDocumentGraph(document, pages, chunks, embeddings);
+  await db.putDocumentGraph(document, pages, chunksWithWorkspace, embeddings);
 
   return {
     document,

@@ -3,17 +3,24 @@ import type {
   DocumentRecord,
   EmbeddingRecord,
   ExtractionRunRecord,
+  FieldReviewRecord,
   PageRecord,
+  WorkspaceRecord,
 } from "../../domain/types";
 
 const DB_NAME = "planscribe-local-db";
-const DB_VERSION = 4;
+const DB_VERSION = 5;
 
+const WORKSPACE_STORE = "workspaces";
 const DOC_STORE = "documents";
 const PAGE_STORE = "pages";
 const CHUNK_STORE = "chunks";
 const EMBEDDING_STORE = "embeddings";
 const EXTRACTION_RUN_STORE = "extraction_runs";
+const FIELD_REVIEW_STORE = "field_reviews";
+
+const DEFAULT_WORKSPACE_ID = "default-workspace";
+const DEFAULT_WORKSPACE_NAME = "Default Workspace";
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -35,6 +42,17 @@ export class PlanScribeDb {
 
       openRequest.onupgradeneeded = () => {
         const db = openRequest.result;
+        const workspaces = db.objectStoreNames.contains(WORKSPACE_STORE)
+          ? openRequest.transaction!.objectStore(WORKSPACE_STORE)
+          : db.createObjectStore(WORKSPACE_STORE, { keyPath: "id" });
+        if (!workspaces.indexNames.contains("by_name")) {
+          workspaces.createIndex("by_name", "name", { unique: false });
+        }
+        workspaces.put({
+          id: DEFAULT_WORKSPACE_ID,
+          name: DEFAULT_WORKSPACE_NAME,
+          createdAt: new Date().toISOString(),
+        } satisfies WorkspaceRecord);
 
         const docs = db.objectStoreNames.contains(DOC_STORE)
           ? openRequest.transaction!.objectStore(DOC_STORE)
@@ -44,6 +62,9 @@ export class PlanScribeDb {
         }
         if (!docs.indexNames.contains("by_sha256")) {
           docs.createIndex("by_sha256", "sha256", { unique: true });
+        }
+        if (!docs.indexNames.contains("by_workspaceId")) {
+          docs.createIndex("by_workspaceId", "workspaceId", { unique: false });
         }
 
         const pages = db.objectStoreNames.contains(PAGE_STORE)
@@ -57,12 +78,18 @@ export class PlanScribeDb {
             unique: true,
           });
         }
+        if (!pages.indexNames.contains("by_workspaceId")) {
+          pages.createIndex("by_workspaceId", "workspaceId", { unique: false });
+        }
 
         const chunks = db.objectStoreNames.contains(CHUNK_STORE)
           ? openRequest.transaction!.objectStore(CHUNK_STORE)
           : db.createObjectStore(CHUNK_STORE, { keyPath: "id" });
         if (!chunks.indexNames.contains("by_documentId")) {
           chunks.createIndex("by_documentId", "documentId", { unique: false });
+        }
+        if (!chunks.indexNames.contains("by_workspaceId")) {
+          chunks.createIndex("by_workspaceId", "workspaceId", { unique: false });
         }
 
         const embeddings = db.objectStoreNames.contains(EMBEDDING_STORE)
@@ -74,12 +101,28 @@ export class PlanScribeDb {
         if (!embeddings.indexNames.contains("by_chunkId")) {
           embeddings.createIndex("by_chunkId", "chunkId", { unique: true });
         }
+        if (!embeddings.indexNames.contains("by_workspaceId")) {
+          embeddings.createIndex("by_workspaceId", "workspaceId", { unique: false });
+        }
 
         const extractionRuns = db.objectStoreNames.contains(EXTRACTION_RUN_STORE)
           ? openRequest.transaction!.objectStore(EXTRACTION_RUN_STORE)
           : db.createObjectStore(EXTRACTION_RUN_STORE, { keyPath: "id" });
         if (!extractionRuns.indexNames.contains("by_createdAt")) {
           extractionRuns.createIndex("by_createdAt", "createdAt", { unique: false });
+        }
+        if (!extractionRuns.indexNames.contains("by_workspaceId")) {
+          extractionRuns.createIndex("by_workspaceId", "workspaceId", { unique: false });
+        }
+
+        const fieldReviews = db.objectStoreNames.contains(FIELD_REVIEW_STORE)
+          ? openRequest.transaction!.objectStore(FIELD_REVIEW_STORE)
+          : db.createObjectStore(FIELD_REVIEW_STORE, { keyPath: "id" });
+        if (!fieldReviews.indexNames.contains("by_workspaceId")) {
+          fieldReviews.createIndex("by_workspaceId", "workspaceId", { unique: false });
+        }
+        if (!fieldReviews.indexNames.contains("by_extractionRunId")) {
+          fieldReviews.createIndex("by_extractionRunId", "extractionRunId", { unique: false });
         }
       };
 
@@ -117,26 +160,56 @@ export class PlanScribeDb {
     });
   }
 
-  async listDocuments(): Promise<DocumentRecord[]> {
+  async listWorkspaces(): Promise<WorkspaceRecord[]> {
+    const db = await this.getDb();
+    const tx = db.transaction(WORKSPACE_STORE, "readonly");
+    const store = tx.objectStore(WORKSPACE_STORE);
+    const result = await requestToPromise(store.getAll() as IDBRequest<WorkspaceRecord[]>);
+    return result.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  async createWorkspace(name: string): Promise<WorkspaceRecord> {
+    const workspace: WorkspaceRecord = {
+      id: crypto.randomUUID(),
+      name: name.trim(),
+      createdAt: new Date().toISOString(),
+    };
+
+    const db = await this.getDb();
+    const tx = db.transaction(WORKSPACE_STORE, "readwrite");
+    tx.objectStore(WORKSPACE_STORE).put(workspace);
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+    return workspace;
+  }
+
+  async listDocuments(workspaceId = DEFAULT_WORKSPACE_ID): Promise<DocumentRecord[]> {
     const db = await this.getDb();
     const tx = db.transaction(DOC_STORE, "readonly");
-    const store = tx.objectStore(DOC_STORE);
-    const result = await requestToPromise(store.getAll() as IDBRequest<DocumentRecord[]>);
+    const index = tx.objectStore(DOC_STORE).index("by_workspaceId");
+    const result = await requestToPromise(
+      index.getAll(IDBKeyRange.only(workspaceId)) as IDBRequest<DocumentRecord[]>,
+    );
     return result.sort((a, b) => b.importedAt.localeCompare(a.importedAt));
   }
 
-  async listChunks(): Promise<ChunkRecord[]> {
+  async listChunks(workspaceId = DEFAULT_WORKSPACE_ID): Promise<ChunkRecord[]> {
     const db = await this.getDb();
     const tx = db.transaction(CHUNK_STORE, "readonly");
-    const store = tx.objectStore(CHUNK_STORE);
-    return requestToPromise(store.getAll() as IDBRequest<ChunkRecord[]>);
+    const index = tx.objectStore(CHUNK_STORE).index("by_workspaceId");
+    return requestToPromise(index.getAll(IDBKeyRange.only(workspaceId)) as IDBRequest<ChunkRecord[]>);
   }
 
-  async listEmbeddings(): Promise<EmbeddingRecord[]> {
+  async listEmbeddings(workspaceId = DEFAULT_WORKSPACE_ID): Promise<EmbeddingRecord[]> {
     const db = await this.getDb();
     const tx = db.transaction(EMBEDDING_STORE, "readonly");
-    const store = tx.objectStore(EMBEDDING_STORE);
-    return requestToPromise(store.getAll() as IDBRequest<EmbeddingRecord[]>);
+    const index = tx.objectStore(EMBEDDING_STORE).index("by_workspaceId");
+    return requestToPromise(
+      index.getAll(IDBKeyRange.only(workspaceId)) as IDBRequest<EmbeddingRecord[]>,
+    );
   }
 
   async putExtractionRun(run: ExtractionRunRecord): Promise<void> {
@@ -151,12 +224,35 @@ export class PlanScribeDb {
     });
   }
 
-  async listExtractionRuns(): Promise<ExtractionRunRecord[]> {
+  async listExtractionRuns(workspaceId = DEFAULT_WORKSPACE_ID): Promise<ExtractionRunRecord[]> {
     const db = await this.getDb();
     const tx = db.transaction(EXTRACTION_RUN_STORE, "readonly");
-    const store = tx.objectStore(EXTRACTION_RUN_STORE);
-    const runs = await requestToPromise(store.getAll() as IDBRequest<ExtractionRunRecord[]>);
+    const index = tx.objectStore(EXTRACTION_RUN_STORE).index("by_workspaceId");
+    const runs = await requestToPromise(
+      index.getAll(IDBKeyRange.only(workspaceId)) as IDBRequest<ExtractionRunRecord[]>,
+    );
     return runs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async putFieldReview(review: FieldReviewRecord): Promise<void> {
+    const db = await this.getDb();
+    const tx = db.transaction(FIELD_REVIEW_STORE, "readwrite");
+    tx.objectStore(FIELD_REVIEW_STORE).put(review);
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  }
+
+  async listFieldReviewsForRun(extractionRunId: string): Promise<FieldReviewRecord[]> {
+    const db = await this.getDb();
+    const tx = db.transaction(FIELD_REVIEW_STORE, "readonly");
+    const index = tx.objectStore(FIELD_REVIEW_STORE).index("by_extractionRunId");
+    const reviews = await requestToPromise(
+      index.getAll(IDBKeyRange.only(extractionRunId)) as IDBRequest<FieldReviewRecord[]>,
+    );
+    return reviews.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
   async findDocumentBySha256(sha256: string): Promise<DocumentRecord | null> {
@@ -179,11 +275,11 @@ export class PlanScribeDb {
     return pages.sort((a, b) => a.pageNumber - b.pageNumber);
   }
 
-  async listPages(): Promise<PageRecord[]> {
+  async listPages(workspaceId = DEFAULT_WORKSPACE_ID): Promise<PageRecord[]> {
     const db = await this.getDb();
     const tx = db.transaction(PAGE_STORE, "readonly");
-    const store = tx.objectStore(PAGE_STORE);
-    return requestToPromise(store.getAll() as IDBRequest<PageRecord[]>);
+    const index = tx.objectStore(PAGE_STORE).index("by_workspaceId");
+    return requestToPromise(index.getAll(IDBKeyRange.only(workspaceId)) as IDBRequest<PageRecord[]>);
   }
 
   async deleteDocument(documentId: string): Promise<void> {
@@ -229,7 +325,7 @@ export class PlanScribeDb {
   async clearAll(): Promise<void> {
     const db = await this.getDb();
     const tx = db.transaction(
-      [DOC_STORE, PAGE_STORE, CHUNK_STORE, EMBEDDING_STORE, EXTRACTION_RUN_STORE],
+      [DOC_STORE, PAGE_STORE, CHUNK_STORE, EMBEDDING_STORE, EXTRACTION_RUN_STORE, FIELD_REVIEW_STORE],
       "readwrite",
     );
     tx.objectStore(DOC_STORE).clear();
@@ -237,6 +333,7 @@ export class PlanScribeDb {
     tx.objectStore(CHUNK_STORE).clear();
     tx.objectStore(EMBEDDING_STORE).clear();
     tx.objectStore(EXTRACTION_RUN_STORE).clear();
+    tx.objectStore(FIELD_REVIEW_STORE).clear();
 
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve();

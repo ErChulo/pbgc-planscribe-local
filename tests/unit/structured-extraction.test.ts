@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildChunkEmbeddings } from "../../src/domain/embeddings/localEmbedder";
 import {
   extractStructuredProvisions,
+  listExtractionTemplates,
   validateStructuredExtraction,
 } from "../../src/domain/extraction/structured";
 import type { ChunkRecord } from "../../src/domain/types";
@@ -34,6 +35,8 @@ describe("structured extraction", () => {
     const embeddings = buildChunkEmbeddings(chunks);
     const result = extractStructuredProvisions(chunks, embeddings);
 
+    expect(result.extraction.templateId).toBe("core-pension-v1");
+    expect(result.extraction.schemaVersion).toBe("1.0");
     expect(result.extraction.fields.normalRetirementAge.citation?.page).toBe(2);
     expect(result.extraction.fields.normalRetirementAge.status).toBe("extracted");
     expect(result.extraction.fields.earlyRetirementReduction.citation?.page).toBe(4);
@@ -52,5 +55,28 @@ describe("structured extraction", () => {
     expect(result.extraction.fields.normalRetirementAge.status).toBe("insufficient_evidence");
     expect(result.extraction.fields.normalRetirementAge.value).toBeNull();
     expect(result.warnings.length).toBeGreaterThan(0);
+  });
+
+  it("supports versioned template selection", () => {
+    const chunks: ChunkRecord[] = [
+      {
+        id: "c1",
+        documentId: "doc-a",
+        pageStart: 2,
+        pageEnd: 2,
+        text: "Normal retirement date for unreduced retirement benefit is age sixty five.",
+      },
+    ];
+    const embeddings = buildChunkEmbeddings(chunks);
+    const templates = listExtractionTemplates();
+    const v2 = templates.find((template) => template.id === "core-pension-v2");
+    expect(v2).toBeDefined();
+
+    const result = extractStructuredProvisions(chunks, embeddings, {
+      templateId: "core-pension-v2",
+    });
+    expect(result.extraction.templateId).toBe("core-pension-v2");
+    expect(result.extraction.schemaVersion).toBe("1.1");
+    expect(result.fieldTraces[0]?.query).toContain("normal retirement date");
   });
 });

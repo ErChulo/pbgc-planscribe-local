@@ -3,7 +3,14 @@ import "./App.css";
 import { buildAuditExportPackage } from "./domain/extraction/auditExport";
 import { evaluateExtraction, evaluateRetrieval } from "./domain/eval/retrievalEval";
 import {
+  buildFieldReviewCsv,
+  buildSignedReleaseManifest,
+  type ReleaseBundlePayload,
+} from "./domain/extraction/releaseExport";
+import {
   extractStructuredProvisions,
+  listExtractionTemplates,
+  type ExtractionTemplateId,
   type StructuredExtraction,
   type StructuredExtractionResult,
 } from "./domain/extraction/structured";
@@ -16,8 +23,10 @@ import type {
   DocumentRecord,
   EmbeddingRecord,
   ExtractionRunRecord,
+  FieldReviewRecord,
   PageRecord,
   SearchResult,
+  WorkspaceRecord,
 } from "./domain/types";
 import { DuplicateDocumentError, ingestPdfFile } from "./features/ingestion/ingestPdf";
 import { PlanScribeDb } from "./infra/db/indexedDb";
@@ -37,6 +46,12 @@ function formatDate(iso: string): string {
 
 function App() {
   const db = useMemo(() => new PlanScribeDb(), []);
+  const extractionTemplates = useMemo(() => listExtractionTemplates(), []);
+  const [workspaces, setWorkspaces] = useState<WorkspaceRecord[]>([]);
+  const [activeWorkspaceId, setActiveWorkspaceId] = useState("default-workspace");
+  const [newWorkspaceName, setNewWorkspaceName] = useState("");
+  const [templateId, setTemplateId] = useState<ExtractionTemplateId>("core-pension-v1");
+
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [chunks, setChunks] = useState<ChunkRecord[]>([]);
   const [embeddings, setEmbeddings] = useState<EmbeddingRecord[]>([]);
@@ -44,7 +59,11 @@ function App() {
   const [highlightedPageNumber, setHighlightedPageNumber] = useState<number | null>(null);
   const [allPages, setAllPages] = useState<PageRecord[]>([]);
   const [pages, setPages] = useState<PageRecord[]>([]);
+
   const [extractionHistory, setExtractionHistory] = useState<ExtractionRunRecord[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [fieldReviews, setFieldReviews] = useState<FieldReviewRecord[]>([]);
+
   const [query, setQuery] = useState("");
   const [question, setQuestion] = useState("");
   const [searchMode, setSearchMode] = useState<SearchMode>("hybrid");
@@ -55,6 +74,7 @@ function App() {
   const [extractionErrors, setExtractionErrors] = useState<string[]>([]);
   const [extractionWarnings, setExtractionWarnings] = useState<string[]>([]);
   const [extractionJson, setExtractionJson] = useState("");
+
   const [evalSummary, setEvalSummary] = useState<{
     top1: number;
     top3: number;
@@ -62,11 +82,13 @@ function App() {
     precision: number;
     recall: number;
   } | null>(null);
+
   const [diagnostics, setDiagnostics] = useState<RuntimeDiagnostics>({
     lastImportMs: 0,
     lastSearchMs: 0,
     lastExtractionMs: 0,
   });
+
   const [state, setState] = useState<AsyncState>("idle");
   const [statusMessage, setStatusMessage] = useState("Ready");
 
@@ -76,23 +98,36 @@ function App() {
   );
 
   const refreshCorpus = useCallback(async () => {
-    const [nextDocuments, nextChunks, nextEmbeddings, nextPages, nextRuns] = await Promise.all([
-      db.listDocuments(),
-      db.listChunks(),
-      db.listEmbeddings(),
-      db.listPages(),
-      db.listExtractionRuns(),
-    ]);
+    const [nextWorkspaces, nextDocuments, nextChunks, nextEmbeddings, nextPages, nextRuns] =
+      await Promise.all([
+        db.listWorkspaces(),
+        db.listDocuments(activeWorkspaceId),
+        db.listChunks(activeWorkspaceId),
+        db.listEmbeddings(activeWorkspaceId),
+        db.listPages(activeWorkspaceId),
+        db.listExtractionRuns(activeWorkspaceId),
+      ]);
+
+    const nextReviews = nextRuns[0] ? await db.listFieldReviewsForRun(nextRuns[0].id) : [];
+
+    setWorkspaces(nextWorkspaces);
     setDocuments(nextDocuments);
     setChunks(nextChunks);
     setEmbeddings(nextEmbeddings);
     setAllPages(nextPages);
     setExtractionHistory(nextRuns);
-  }, [db]);
+    setFieldReviews(nextReviews);
+  }, [activeWorkspaceId, db]);
 
   useEffect(() => {
     void refreshCorpus();
   }, [refreshCorpus]);
+
+  useEffect(() => {
+    if (!selectedRunId && extractionHistory[0]) {
+      setSelectedRunId(extractionHistory[0].id);
+    }
+  }, [extractionHistory, selectedRunId]);
 
   function downloadJson(filename: string, payload: unknown) {
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
@@ -104,12 +139,52 @@ function App() {
     URL.revokeObjectURL(url);
   }
 
+  function downloadText(filename: string, payload: string, mimeType = "text/plain;charset=utf-8") {
+    const blob = new Blob([payload], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function handleCreateWorkspace() {
+    const name = newWorkspaceName.trim();
+    if (!name) {
+      return;
+    }
+
+    const workspace = await db.createWorkspace(name);
+    setNewWorkspaceName("");
+    setActiveWorkspaceId(workspace.id);
+    await refreshCorpus();
+    setStatusMessage(`Workspace created: ${workspace.name}`);
+  }
+
+  async function handleWorkspaceChange(workspaceId: string) {
+    setActiveWorkspaceId(workspaceId);
+    setSelectedRunId(null);
+    setSelectedDocumentId(null);
+    setHighlightedPageNumber(null);
+    setPages([]);
+    setResults([]);
+    setAnswer(null);
+    setExtraction(null);
+    setExtractionResult(null);
+    setExtractionErrors([]);
+    setExtractionWarnings([]);
+    setExtractionJson("");
+    await refreshCorpus();
+  }
+
   async function handleImport(event: React.ChangeEvent<HTMLInputElement>) {
     const files = event.target.files;
     if (!files || files.length === 0) {
       return;
     }
 
+    const importStart = performance.now();
     setState("working");
     setStatusMessage(`Importing ${files.length} PDF(s)...`);
     let importedCount = 0;
@@ -119,6 +194,7 @@ function App() {
     for (const file of Array.from(files)) {
       try {
         const summary = await ingestPdfFile(db, file, {
+          workspaceId: activeWorkspaceId,
           onProgress: (progressEvent) => {
             if (progressEvent.stage === "ocr_fallback") {
               const percent = Math.round((progressEvent.ocrProgress ?? 0) * 100);
@@ -229,6 +305,7 @@ function App() {
       setExtractionErrors([]);
       setExtractionWarnings([]);
       setExtractionJson("");
+      setFieldReviews([]);
       await refreshCorpus();
       setStatusMessage("All local IndexedDB data deleted.");
     } finally {
@@ -265,7 +342,7 @@ function App() {
 
   async function handleRunExtraction() {
     const start = performance.now();
-    const extracted = extractStructuredProvisions(chunks, embeddings);
+    const extracted = extractStructuredProvisions(chunks, embeddings, { templateId });
     const auditPackage = buildAuditExportPackage({
       extractionResult: extracted,
       documents,
@@ -282,6 +359,7 @@ function App() {
 
     const runRecord: ExtractionRunRecord = {
       id: crypto.randomUUID(),
+      workspaceId: activeWorkspaceId,
       createdAt: new Date().toISOString(),
       documentIds: documents.map((document) => document.id),
       extractionJson: JSON.stringify(extracted.extraction, null, 2),
@@ -291,6 +369,7 @@ function App() {
     };
     await db.putExtractionRun(runRecord);
     await refreshCorpus();
+    setSelectedRunId(runRecord.id);
 
     const dedupedEvidence = Array.from(
       new Map(extracted.supportingEvidence.map((evidence) => [evidence.chunkId, evidence])).values(),
@@ -301,8 +380,36 @@ function App() {
     setStatusMessage(
       `Structured extraction complete. Fields with citations: ${
         Object.values(extracted.extraction.fields).filter((field) => field.citation).length
-      }/3. Validation errors: ${extracted.validationErrors.length}. Warnings: ${extracted.warnings.length}.`,
+      }/3. Validation errors: ${extracted.validationErrors.length}. Warnings: ${extracted.warnings.length}. Template: ${extracted.extraction.templateId}.`,
     );
+  }
+
+  async function handleSubmitFieldReview(
+    extractionRunId: string,
+    fieldName: keyof StructuredExtraction["fields"],
+    action: "approved" | "rejected" | "edited",
+    sourceExtraction: StructuredExtraction,
+  ) {
+    const reviewerNote = window.prompt("Reviewer note (optional):", "") ?? "";
+    const editedValue =
+      action === "edited"
+        ? (window.prompt("Edited field value:", sourceExtraction.fields[fieldName].value ?? "") ?? "").trim()
+        : undefined;
+
+    const review: FieldReviewRecord = {
+      id: crypto.randomUUID(),
+      workspaceId: activeWorkspaceId,
+      extractionRunId,
+      fieldName,
+      action,
+      reviewerNote,
+      editedValue,
+      createdAt: new Date().toISOString(),
+    };
+    await db.putFieldReview(review);
+    const reviews = await db.listFieldReviewsForRun(extractionRunId);
+    setFieldReviews(reviews);
+    setStatusMessage(`Review saved for ${fieldName}: ${action}`);
   }
 
   function handleExportExtractionJson() {
@@ -339,30 +446,48 @@ function App() {
     setStatusMessage("Audit package exported.");
   }
 
-  function handleCreateReleaseBundle() {
-    const latest = extractionHistory[0];
-    if (!latest) {
+  async function handleCreateReleaseBundle() {
+    const runId = selectedRunId ?? extractionHistory[0]?.id;
+    if (!runId) {
       return;
     }
+    const selectedRun = extractionHistory.find((run) => run.id === runId);
+    if (!selectedRun) {
+      return;
+    }
+    const reviews = await db.listFieldReviewsForRun(selectedRun.id);
 
-    const bundle = {
+    const bundle: ReleaseBundlePayload = {
       bundleVersion: "1.0",
       generatedAt: new Date().toISOString(),
-      runId: latest.id,
-      extraction: JSON.parse(latest.extractionJson),
-      audit: JSON.parse(latest.auditJson),
+      workspaceId: activeWorkspaceId,
+      runId: selectedRun.id,
+      extraction: JSON.parse(selectedRun.extractionJson),
+      audit: JSON.parse(selectedRun.auditJson),
+      reviews,
       metadata: {
-        validationErrorCount: latest.validationErrorCount,
-        warningCount: latest.warningCount,
+        validationErrorCount: selectedRun.validationErrorCount,
+        warningCount: selectedRun.warningCount,
       },
     };
-
-    downloadJson(
-      `planscribe-release-bundle-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`,
+    const reviewCsv = buildFieldReviewCsv(reviews);
+    const manifest = await buildSignedReleaseManifest({
       bundle,
-    );
+      reviewCsv,
+    });
+    const stamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
 
-    setStatusMessage("Release bundle JSON exported from latest extraction run.");
+    downloadJson(`planscribe-release-bundle-${stamp}.json`, bundle);
+    downloadJson(`planscribe-release-manifest-${stamp}.json`, manifest);
+    downloadText(`planscribe-field-reviews-${stamp}.csv`, reviewCsv, "text/csv;charset=utf-8");
+
+    setStatusMessage(`Release bundle exported with signed manifest. SHA256: ${manifest.hashes.bundleSha256}`);
+  }
+
+  async function handleSelectExtractionRun(runId: string) {
+    setSelectedRunId(runId);
+    const reviews = await db.listFieldReviewsForRun(runId);
+    setFieldReviews(reviews);
   }
 
   function handleRunEvalHarness() {
@@ -394,12 +519,48 @@ function App() {
     setStatusMessage("Evaluation harness metrics computed.");
   }
 
+  const latestRun = extractionHistory[0] ?? null;
+  const selectedRun = extractionHistory.find((run) => run.id === (selectedRunId ?? latestRun?.id)) ?? null;
+  const reviewExtraction = useMemo(() => {
+    if (extraction) {
+      return extraction;
+    }
+    if (!selectedRun) {
+      return null;
+    }
+    try {
+      return JSON.parse(selectedRun.extractionJson) as StructuredExtraction;
+    } catch {
+      return null;
+    }
+  }, [extraction, selectedRun]);
+
   return (
     <div className="app">
       <header>
         <h1>PlanScribe Local</h1>
         <p>Browser-only PDF provision analysis with local storage and citations.</p>
       </header>
+
+      <section className="panel">
+        <h2>Workspaces</h2>
+        <div className="actions">
+          <select value={activeWorkspaceId} onChange={(event) => void handleWorkspaceChange(event.target.value)}>
+            {workspaces.map((workspace) => (
+              <option key={workspace.id} value={workspace.id}>
+                {workspace.name}
+              </option>
+            ))}
+          </select>
+          <input
+            type="text"
+            value={newWorkspaceName}
+            placeholder="New workspace name"
+            onChange={(event) => setNewWorkspaceName(event.target.value)}
+          />
+          <button onClick={() => void handleCreateWorkspace()}>Create Workspace</button>
+        </div>
+      </section>
 
       <section className="panel">
         <h2>Import PDFs</h2>
@@ -461,7 +622,6 @@ function App() {
 
       <section className="panel">
         <h2>Grounded QA</h2>
-        <p>Answer generation is constrained to locally retrieved evidence chunks.</p>
         <form onSubmit={handleQuestionSubmit}>
           <input
             type="search"
@@ -476,18 +636,20 @@ function App() {
         {answer ? (
           <div className="qa-result">
             <p>{answer.answer}</p>
-            <small>
-              {answer.citations.map((citation) => `doc=${citation.documentId} p${citation.page}`).join(" | ") ||
-                "No citations"}
-            </small>
           </div>
         ) : null}
       </section>
 
       <section className="panel">
         <h2>Structured Extraction</h2>
-        <p>Extract key provision fields as JSON with explicit citations and schema validation.</p>
         <div className="actions extraction-actions">
+          <select value={templateId} onChange={(event) => setTemplateId(event.target.value as ExtractionTemplateId)}>
+            {extractionTemplates.map((template) => (
+              <option key={template.id} value={template.id}>
+                {template.name} ({template.schemaVersion})
+              </option>
+            ))}
+          </select>
           <button onClick={() => void handleRunExtraction()} disabled={state === "working" || chunks.length === 0}>
             Run Extraction
           </button>
@@ -501,109 +663,49 @@ function App() {
             Create Release Bundle
           </button>
         </div>
-        {extraction ? (
-          <div className="extraction-grid">
-            <article className="result">
-              <h3>normalRetirementAge</h3>
-              <p>{extraction.fields.normalRetirementAge.value ?? "(not found)"}</p>
-              <small>
-                confidence={extraction.fields.normalRetirementAge.confidence}{" "}
-                {extraction.fields.normalRetirementAge.citation
-                  ? `| doc=${extraction.fields.normalRetirementAge.citation.documentId} page=${extraction.fields.normalRetirementAge.citation.page}`
-                  : "| no citation"}
-              </small>
-              {extraction.fields.normalRetirementAge.citation ? (
-                <div className="actions">
-                  {(() => {
-                    const citation = extraction.fields.normalRetirementAge.citation;
-                    if (!citation) {
-                      return null;
-                    }
-                    return (
-                      <button onClick={() => void handleOpenCitationByRef(citation)}>
-                        Open Citation
-                      </button>
-                    );
-                  })()}
-                </div>
-              ) : null}
-            </article>
-            <article className="result">
-              <h3>earlyRetirementReduction</h3>
-              <p>{extraction.fields.earlyRetirementReduction.value ?? "(not found)"}</p>
-              <small>
-                confidence={extraction.fields.earlyRetirementReduction.confidence}{" "}
-                {extraction.fields.earlyRetirementReduction.citation
-                  ? `| doc=${extraction.fields.earlyRetirementReduction.citation.documentId} page=${extraction.fields.earlyRetirementReduction.citation.page}`
-                  : "| no citation"}
-              </small>
-              {extraction.fields.earlyRetirementReduction.citation ? (
-                <div className="actions">
-                  {(() => {
-                    const citation = extraction.fields.earlyRetirementReduction.citation;
-                    if (!citation) {
-                      return null;
-                    }
-                    return (
-                      <button onClick={() => void handleOpenCitationByRef(citation)}>
-                        Open Citation
-                      </button>
-                    );
-                  })()}
-                </div>
-              ) : null}
-            </article>
-            <article className="result">
-              <h3>vestingSchedule</h3>
-              <p>{extraction.fields.vestingSchedule.value ?? "(not found)"}</p>
-              <small>
-                confidence={extraction.fields.vestingSchedule.confidence}{" "}
-                {extraction.fields.vestingSchedule.citation
-                  ? `| doc=${extraction.fields.vestingSchedule.citation.documentId} page=${extraction.fields.vestingSchedule.citation.page}`
-                  : "| no citation"}
-              </small>
-              {extraction.fields.vestingSchedule.citation ? (
-                <div className="actions">
-                  {(() => {
-                    const citation = extraction.fields.vestingSchedule.citation;
-                    if (!citation) {
-                      return null;
-                    }
-                    return (
-                      <button onClick={() => void handleOpenCitationByRef(citation)}>
-                        Open Citation
-                      </button>
-                    );
-                  })()}
-                </div>
-              ) : null}
-            </article>
-          </div>
-        ) : null}
-
-        <h3>JSON Output</h3>
-        <pre className="json-output">{extractionJson || "{ }"}</pre>
-
-        <h3>Validation</h3>
         {extractionErrors.length > 0 ? (
-          <ul className="errors">
-            {extractionErrors.map((error) => (
-              <li key={error}>{error}</li>
-            ))}
-          </ul>
+          <p>Validation errors: {extractionErrors.join(" | ")}</p>
         ) : (
-          <p>No validation errors.</p>
+          <p>Validation errors: none</p>
         )}
-
-        <h3>Warnings</h3>
         {extractionWarnings.length > 0 ? (
-          <ul className="warnings">
-            {extractionWarnings.map((warning) => (
-              <li key={warning}>{warning}</li>
+          <p>Warnings: {extractionWarnings.join(" | ")}</p>
+        ) : (
+          <p>Warnings: none</p>
+        )}
+        <pre className="json-output">{extractionJson || "{ }"}</pre>
+      </section>
+
+      <section className="panel">
+        <h2>Review Queue</h2>
+        {!selectedRun || !reviewExtraction ? (
+          <p>Run an extraction to review fields.</p>
+        ) : (
+          <div className="extraction-grid">
+            {(Object.keys(reviewExtraction.fields) as Array<keyof StructuredExtraction["fields"]>).map((fieldName) => (
+              <article key={fieldName} className="result">
+                <h3>{fieldName}</h3>
+                <p>{reviewExtraction.fields[fieldName].value ?? "(not found)"}</p>
+                <div className="actions">
+                  <button onClick={() => void handleSubmitFieldReview(selectedRun.id, fieldName, "approved", reviewExtraction)}>Approve</button>
+                  <button onClick={() => void handleSubmitFieldReview(selectedRun.id, fieldName, "rejected", reviewExtraction)}>Reject</button>
+                  <button onClick={() => void handleSubmitFieldReview(selectedRun.id, fieldName, "edited", reviewExtraction)}>Edit</button>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
+        <h3>Recent Reviews</h3>
+        {fieldReviews.length === 0 ? (
+          <p>No reviews yet.</p>
+        ) : (
+          <ul className="history-list">
+            {fieldReviews.map((review) => (
+              <li key={review.id}>
+                <small>{formatDate(review.createdAt)} | {review.fieldName} | {review.action}</small>
+              </li>
             ))}
           </ul>
-        ) : (
-          <p>No extraction warnings.</p>
         )}
       </section>
 
@@ -615,9 +717,10 @@ function App() {
           <ul className="history-list">
             {extractionHistory.map((run) => (
               <li key={run.id}>
-                <small>
-                  {formatDate(run.createdAt)} | errors={run.validationErrorCount} | warnings={run.warningCount}
-                </small>
+                <small>{formatDate(run.createdAt)} | errors={run.validationErrorCount} | warnings={run.warningCount}</small>
+                <div className="actions">
+                  <button onClick={() => void handleSelectExtractionRun(run.id)}>Review This Run</button>
+                </div>
               </li>
             ))}
           </ul>
@@ -627,23 +730,18 @@ function App() {
       <section className="panel">
         <h2>Diagnostics</h2>
         <div className="actions">
-          <button onClick={handleRunEvalHarness} disabled={!extraction || results.length === 0}>
-            Run Eval Harness
-          </button>
+          <button onClick={handleRunEvalHarness} disabled={!extraction || results.length === 0}>Run Eval Harness</button>
         </div>
         <p>
           importMs={diagnostics.lastImportMs.toFixed(1)} | searchMs={diagnostics.lastSearchMs.toFixed(1)} |
           extractionMs={diagnostics.lastExtractionMs.toFixed(1)}
         </p>
         <p>
-          docs={documents.length} pages={allPages.length} ocrPages=
-          {allPages.filter((page) => page.ocrApplied).length} chunks={chunks.length} embeddings={embeddings.length}
+          docs={documents.length} pages={allPages.length} ocrPages={allPages.filter((page) => page.ocrApplied).length} chunks={chunks.length} embeddings={embeddings.length}
         </p>
         {evalSummary ? (
           <p>
-            top1={evalSummary.top1.toFixed(2)} top3={evalSummary.top3.toFixed(2)} top5=
-            {evalSummary.top5.toFixed(2)} precision={evalSummary.precision.toFixed(2)} recall=
-            {evalSummary.recall.toFixed(2)}
+            top1={evalSummary.top1.toFixed(2)} top3={evalSummary.top3.toFixed(2)} top5={evalSummary.top5.toFixed(2)} precision={evalSummary.precision.toFixed(2)} recall={evalSummary.recall.toFixed(2)}
           </p>
         ) : (
           <p>Run eval harness to compute retrieval/extraction metrics.</p>
@@ -713,4 +811,3 @@ function App() {
 }
 
 export default App;
-    const importStart = performance.now();
