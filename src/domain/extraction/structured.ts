@@ -1,5 +1,11 @@
 import { hybridSearch } from "../retrieval/hybrid";
 import type { ChunkRecord, Citation, EmbeddingRecord, SearchResult } from "../types";
+import type { NormalizedFieldValue } from "./parsers";
+import {
+  parseEarlyRetirementReduction,
+  parseNormalRetirementAge,
+  parseVestingSchedule,
+} from "./parsers";
 
 const MIN_CONFIDENCE = 0.35;
 
@@ -9,6 +15,7 @@ export interface ExtractedProvisionField {
   citation: Citation | null;
   status: "extracted" | "insufficient_evidence";
   reason?: string;
+  normalized?: NormalizedFieldValue | null;
 }
 
 export interface StructuredExtraction {
@@ -38,6 +45,7 @@ function normalizeFieldValue(snippet: string): string {
 }
 
 function pickField(
+  fieldName: keyof StructuredExtraction["fields"],
   query: string,
   chunks: ChunkRecord[],
   embeddings: EmbeddingRecord[],
@@ -52,6 +60,7 @@ function pickField(
         citation: null,
         status: "insufficient_evidence",
         reason: "No supporting evidence found.",
+        normalized: null,
       },
       evidence: [],
       warning: `No evidence found for query: "${query}"`,
@@ -67,18 +76,27 @@ function pickField(
         citation: null,
         status: "insufficient_evidence",
         reason: `Top evidence score ${confidence} below threshold ${MIN_CONFIDENCE}.`,
+        normalized: null,
       },
       evidence: results,
       warning: `Insufficient evidence confidence for query: "${query}"`,
     };
   }
 
+  const value = normalizeFieldValue(best.snippet);
+  const normalizedByField: Record<keyof StructuredExtraction["fields"], NormalizedFieldValue | null> = {
+    normalRetirementAge: parseNormalRetirementAge(value),
+    earlyRetirementReduction: parseEarlyRetirementReduction(value),
+    vestingSchedule: parseVestingSchedule(value),
+  };
+
   return {
     field: {
-      value: normalizeFieldValue(best.snippet),
+      value,
       confidence,
       citation: best.citation,
       status: "extracted",
+      normalized: normalizedByField[fieldName],
     },
     evidence: results,
   };
@@ -123,9 +141,9 @@ export function extractStructuredProvisions(
   chunks: ChunkRecord[],
   embeddings: EmbeddingRecord[],
 ): StructuredExtractionResult {
-  const normalRetirement = pickField("normal retirement age", chunks, embeddings);
-  const earlyRetirement = pickField("early retirement reduction", chunks, embeddings);
-  const vesting = pickField("vesting schedule cliff graded vesting", chunks, embeddings);
+  const normalRetirement = pickField("normalRetirementAge", "normal retirement age", chunks, embeddings);
+  const earlyRetirement = pickField("earlyRetirementReduction", "early retirement reduction", chunks, embeddings);
+  const vesting = pickField("vestingSchedule", "vesting schedule cliff graded vesting", chunks, embeddings);
   const warnings = [normalRetirement.warning, earlyRetirement.warning, vesting.warning].filter(
     (warning): warning is string => Boolean(warning),
   );

@@ -1,5 +1,5 @@
 import { createChunks } from "../../domain/chunking/chunker";
-import { buildChunkEmbeddings } from "../../domain/embeddings/localEmbedder";
+import { buildChunkEmbeddingsIncremental } from "../../domain/embeddings/localEmbedder";
 import { normalizeText } from "../../domain/text/normalize";
 import type { DocumentRecord, PageRecord } from "../../domain/types";
 import { PlanScribeDb } from "../../infra/db/indexedDb";
@@ -31,8 +31,16 @@ export interface IngestionSummary {
 }
 
 export interface IngestionOptions {
-  onProgress?: (event: ExtractProgressEvent) => void;
+  onProgress?: (event: IngestionProgressEvent) => void;
 }
+
+export type IngestionProgressEvent =
+  | ExtractProgressEvent
+  | {
+      stage: "embedding";
+      processed: number;
+      total: number;
+    };
 
 export function buildIngestionArtifacts(input: {
   documentId: string;
@@ -100,7 +108,11 @@ export async function ingestPdfFile(
       text: page.text,
     })),
   );
-  const embeddings = buildChunkEmbeddings(chunks);
+  const embeddings = await buildChunkEmbeddingsIncremental(chunks, {
+    onProgress: ({ processed, total }) => {
+      options.onProgress?.({ stage: "embedding", processed, total });
+    },
+  });
 
   await db.putDocumentGraph(document, pages, chunks, embeddings);
 
