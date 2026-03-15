@@ -1,0 +1,76 @@
+flowchart LR
+  classDef app fill:#fef3c7,stroke:#d97706,color:#7c2d12;
+  classDef domain fill:#dcfce7,stroke:#16a34a,color:#14532d;
+  classDef features fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+  classDef infra fill:#f3e8ff,stroke:#9333ea,color:#581c87;
+  classDef other fill:#e5e7eb,stroke:#6b7280,color:#111827;
+  App_tsx["src/App.tsx"]
+  class App_tsx app;
+  App_css["src/App.css"]
+  class App_css other;
+  domain_backup_workspaceBackup_ts["src/domain/backup/workspaceBackup.ts"]
+  class domain_backup_workspaceBackup_ts domain;
+  domain_eval_retrievalEval_ts["src/domain/eval/retrievalEval.ts"]
+  class domain_eval_retrievalEval_ts domain;
+  domain_extraction_auditExport_ts["src/domain/extraction/auditExport.ts"]
+  class domain_extraction_auditExport_ts domain;
+  domain_extraction_releaseExport_ts["src/domain/extraction/releaseExport.ts"]
+  class domain_extraction_releaseExport_ts domain;
+  domain_extraction_structured_ts["src/domain/extraction/structured.ts"]
+  class domain_extraction_structured_ts domain;
+  domain_retrieval_hybrid_ts["src/domain/retrieval/hybrid.ts"]
+  class domain_retrieval_hybrid_ts domain;
+  domain_embeddings_localEmbedder_ts["src/domain/embeddings/localEmbedder.ts"]
+  class domain_embeddings_localEmbedder_ts domain;
+  domain_text_normalize_ts["src/domain/text/normalize.ts"]
+  class domain_text_normalize_ts domain;
+  domain_retrieval_lexical_ts["src/domain/retrieval/lexical.ts"]
+  class domain_retrieval_lexical_ts domain;
+  domain_extraction_parsers_ts["src/domain/extraction/parsers.ts"]
+  class domain_extraction_parsers_ts domain;
+  domain_qa_grounded_ts["src/domain/qa/grounded.ts"]
+  class domain_qa_grounded_ts domain;
+  features_ingestion_ingestPdf_ts["src/features/ingestion/ingestPdf.ts"]
+  class features_ingestion_ingestPdf_ts features;
+  domain_chunking_chunker_ts["src/domain/chunking/chunker.ts"]
+  class domain_chunking_chunker_ts domain;
+  infra_pdf_extract_ts["src/infra/pdf/extract.ts"]
+  class infra_pdf_extract_ts infra;
+  infra_pdf_ocrFallback_ts["src/infra/pdf/ocrFallback.ts"]
+  class infra_pdf_ocrFallback_ts infra;
+  infra_pdf_tesseractEngine_ts["src/infra/pdf/tesseractEngine.ts"]
+  class infra_pdf_tesseractEngine_ts infra;
+  infra_db_indexedDb_ts["src/infra/db/indexedDb.ts"]
+  class infra_db_indexedDb_ts infra;
+  domain_types_ts["src/domain/types.ts"]
+  class domain_types_ts domain;
+  main_tsx["src/main.tsx"]
+  class main_tsx app;
+  index_css["src/index.css"]
+  class index_css other;
+  App_tsx --> App_css
+  App_tsx --> domain_backup_workspaceBackup_ts
+  App_tsx --> domain_eval_retrievalEval_ts
+  App_tsx --> domain_extraction_auditExport_ts
+  App_tsx --> domain_extraction_releaseExport_ts
+  App_tsx --> domain_extraction_structured_ts
+  App_tsx --> domain_qa_grounded_ts
+  App_tsx --> domain_retrieval_hybrid_ts
+  App_tsx --> domain_retrieval_lexical_ts
+  App_tsx --> features_ingestion_ingestPdf_ts
+  App_tsx --> infra_db_indexedDb_ts
+  domain_extraction_structured_ts --> domain_retrieval_hybrid_ts
+  domain_extraction_structured_ts --> domain_extraction_parsers_ts
+  domain_retrieval_hybrid_ts --> domain_embeddings_localEmbedder_ts
+  domain_retrieval_hybrid_ts --> domain_retrieval_lexical_ts
+  domain_embeddings_localEmbedder_ts --> domain_text_normalize_ts
+  domain_retrieval_lexical_ts --> domain_text_normalize_ts
+  features_ingestion_ingestPdf_ts --> domain_chunking_chunker_ts
+  features_ingestion_ingestPdf_ts --> domain_embeddings_localEmbedder_ts
+  features_ingestion_ingestPdf_ts --> domain_text_normalize_ts
+  features_ingestion_ingestPdf_ts --> infra_pdf_extract_ts
+  domain_chunking_chunker_ts --> domain_text_normalize_ts
+  infra_pdf_extract_ts --> infra_pdf_ocrFallback_ts
+  infra_pdf_ocrFallback_ts --> infra_pdf_tesseractEngine_ts
+  main_tsx --> App_tsx
+  main_tsx --> index_css

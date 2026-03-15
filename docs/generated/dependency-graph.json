@@ -1,0 +1,325 @@
+{
+  "generatedAt": "2026-03-15T21:45:12.599Z",
+  "nodeCount": 22,
+  "edgeCount": 26,
+  "cycleCount": 0,
+  "layerCounts": {
+    "app": 2,
+    "domain": 13,
+    "features": 1,
+    "infra": 4,
+    "other": 2
+  },
+  "topOutDegree": [
+    {
+      "path": "src/App.tsx",
+      "outgoing": 11
+    },
+    {
+      "path": "src/features/ingestion/ingestPdf.ts",
+      "outgoing": 4
+    },
+    {
+      "path": "src/domain/extraction/structured.ts",
+      "outgoing": 2
+    },
+    {
+      "path": "src/domain/retrieval/hybrid.ts",
+      "outgoing": 2
+    },
+    {
+      "path": "src/main.tsx",
+      "outgoing": 2
+    },
+    {
+      "path": "src/domain/embeddings/localEmbedder.ts",
+      "outgoing": 1
+    },
+    {
+      "path": "src/domain/retrieval/lexical.ts",
+      "outgoing": 1
+    },
+    {
+      "path": "src/domain/chunking/chunker.ts",
+      "outgoing": 1
+    },
+    {
+      "path": "src/infra/pdf/extract.ts",
+      "outgoing": 1
+    },
+    {
+      "path": "src/infra/pdf/ocrFallback.ts",
+      "outgoing": 1
+    }
+  ],
+  "nodes": [
+    {
+      "id": "App_tsx",
+      "path": "src/App.tsx",
+      "layer": "app"
+    },
+    {
+      "id": "App_css",
+      "path": "src/App.css",
+      "layer": "other"
+    },
+    {
+      "id": "domain_backup_workspaceBackup_ts",
+      "path": "src/domain/backup/workspaceBackup.ts",
+      "layer": "domain"
+    },
+    {
+      "id": "domain_eval_retrievalEval_ts",
+      "path": "src/domain/eval/retrievalEval.ts",
+      "layer": "domain"
+    },
+    {
+      "id": "domain_extraction_auditExport_ts",
+      "path": "src/domain/extraction/auditExport.ts",
+      "layer": "domain"
+    },
+    {
+      "id": "domain_extraction_releaseExport_ts",
+      "path": "src/domain/extraction/releaseExport.ts",
+      "layer": "domain"
+    },
+    {
+      "id": "domain_extraction_structured_ts",
+      "path": "src/domain/extraction/structured.ts",
+      "layer": "domain"
+    },
+    {
+      "id": "domain_retrieval_hybrid_ts",
+      "path": "src/domain/retrieval/hybrid.ts",
+      "layer": "domain"
+    },
+    {
+      "id": "domain_embeddings_localEmbedder_ts",
+      "path": "src/domain/embeddings/localEmbedder.ts",
+      "layer": "domain"
+    },
+    {
+      "id": "domain_text_normalize_ts",
+      "path": "src/domain/text/normalize.ts",
+      "layer": "domain"
+    },
+    {
+      "id": "domain_retrieval_lexical_ts",
+      "path": "src/domain/retrieval/lexical.ts",
+      "layer": "domain"
+    },
+    {
+      "id": "domain_extraction_parsers_ts",
+      "path": "src/domain/extraction/parsers.ts",
+      "layer": "domain"
+    },
+    {
+      "id": "domain_qa_grounded_ts",
+      "path": "src/domain/qa/grounded.ts",
+      "layer": "domain"
+    },
+    {
+      "id": "features_ingestion_ingestPdf_ts",
+      "path": "src/features/ingestion/ingestPdf.ts",
+      "layer": "features"
+    },
+    {
+      "id": "domain_chunking_chunker_ts",
+      "path": "src/domain/chunking/chunker.ts",
+      "layer": "domain"
+    },
+    {
+      "id": "infra_pdf_extract_ts",
+      "path": "src/infra/pdf/extract.ts",
+      "layer": "infra"
+    },
+    {
+      "id": "infra_pdf_ocrFallback_ts",
+      "path": "src/infra/pdf/ocrFallback.ts",
+      "layer": "infra"
+    },
+    {
+      "id": "infra_pdf_tesseractEngine_ts",
+      "path": "src/infra/pdf/tesseractEngine.ts",
+      "layer": "infra"
+    },
+    {
+      "id": "infra_db_indexedDb_ts",
+      "path": "src/infra/db/indexedDb.ts",
+      "layer": "infra"
+    },
+    {
+      "id": "domain_types_ts",
+      "path": "src/domain/types.ts",
+      "layer": "domain"
+    },
+    {
+      "id": "main_tsx",
+      "path": "src/main.tsx",
+      "layer": "app"
+    },
+    {
+      "id": "index_css",
+      "path": "src/index.css",
+      "layer": "other"
+    }
+  ],
+  "edges": [
+    {
+      "sourceId": "App_tsx",
+      "targetId": "App_css",
+      "source": "src/App.tsx",
+      "target": "src/App.css"
+    },
+    {
+      "sourceId": "App_tsx",
+      "targetId": "domain_backup_workspaceBackup_ts",
+      "source": "src/App.tsx",
+      "target": "src/domain/backup/workspaceBackup.ts"
+    },
+    {
+      "sourceId": "App_tsx",
+      "targetId": "domain_eval_retrievalEval_ts",
+      "source": "src/App.tsx",
+      "target": "src/domain/eval/retrievalEval.ts"
+    },
+    {
+      "sourceId": "App_tsx",
+      "targetId": "domain_extraction_auditExport_ts",
+      "source": "src/App.tsx",
+      "target": "src/domain/extraction/auditExport.ts"
+    },
+    {
+      "sourceId": "App_tsx",
+      "targetId": "domain_extraction_releaseExport_ts",
+      "source": "src/App.tsx",
+      "target": "src/domain/extraction/releaseExport.ts"
+    },
+    {
+      "sourceId": "App_tsx",
+      "targetId": "domain_extraction_structured_ts",
+      "source": "src/App.tsx",
+      "target": "src/domain/extraction/structured.ts"
+    },
+    {
+      "sourceId": "App_tsx",
+      "targetId": "domain_qa_grounded_ts",
+      "source": "src/App.tsx",
+      "target": "src/domain/qa/grounded.ts"
+    },
+    {
+      "sourceId": "App_tsx",
+      "targetId": "domain_retrieval_hybrid_ts",
+      "source": "src/App.tsx",
+      "target": "src/domain/retrieval/hybrid.ts"
+    },
+    {
+      "sourceId": "App_tsx",
+      "targetId": "domain_retrieval_lexical_ts",
+      "source": "src/App.tsx",
+      "target": "src/domain/retrieval/lexical.ts"
+    },
+    {
+      "sourceId": "App_tsx",
+      "targetId": "features_ingestion_ingestPdf_ts",
+      "source": "src/App.tsx",
+      "target": "src/features/ingestion/ingestPdf.ts"
+    },
+    {
+      "sourceId": "App_tsx",
+      "targetId": "infra_db_indexedDb_ts",
+      "source": "src/App.tsx",
+      "target": "src/infra/db/indexedDb.ts"
+    },
+    {
+      "sourceId": "domain_extraction_structured_ts",
+      "targetId": "domain_retrieval_hybrid_ts",
+      "source": "src/domain/extraction/structured.ts",
+      "target": "src/domain/retrieval/hybrid.ts"
+    },
+    {
+      "sourceId": "domain_extraction_structured_ts",
+      "targetId": "domain_extraction_parsers_ts",
+      "source": "src/domain/extraction/structured.ts",
+      "target": "src/domain/extraction/parsers.ts"
+    },
+    {
+      "sourceId": "domain_retrieval_hybrid_ts",
+      "targetId": "domain_embeddings_localEmbedder_ts",
+      "source": "src/domain/retrieval/hybrid.ts",
+      "target": "src/domain/embeddings/localEmbedder.ts"
+    },
+    {
+      "sourceId": "domain_retrieval_hybrid_ts",
+      "targetId": "domain_retrieval_lexical_ts",
+      "source": "src/domain/retrieval/hybrid.ts",
+      "target": "src/domain/retrieval/lexical.ts"
+    },
+    {
+      "sourceId": "domain_embeddings_localEmbedder_ts",
+      "targetId": "domain_text_normalize_ts",
+      "source": "src/domain/embeddings/localEmbedder.ts",
+      "target": "src/domain/text/normalize.ts"
+    },
+    {
+      "sourceId": "domain_retrieval_lexical_ts",
+      "targetId": "domain_text_normalize_ts",
+      "source": "src/domain/retrieval/lexical.ts",
+      "target": "src/domain/text/normalize.ts"
+    },
+    {
+      "sourceId": "features_ingestion_ingestPdf_ts",
+      "targetId": "domain_chunking_chunker_ts",
+      "source": "src/features/ingestion/ingestPdf.ts",
+      "target": "src/domain/chunking/chunker.ts"
+    },
+    {
+      "sourceId": "features_ingestion_ingestPdf_ts",
+      "targetId": "domain_embeddings_localEmbedder_ts",
+      "source": "src/features/ingestion/ingestPdf.ts",
+      "target": "src/domain/embeddings/localEmbedder.ts"
+    },
+    {
+      "sourceId": "features_ingestion_ingestPdf_ts",
+      "targetId": "domain_text_normalize_ts",
+      "source": "src/features/ingestion/ingestPdf.ts",
+      "target": "src/domain/text/normalize.ts"
+    },
+    {
+      "sourceId": "features_ingestion_ingestPdf_ts",
+      "targetId": "infra_pdf_extract_ts",
+      "source": "src/features/ingestion/ingestPdf.ts",
+      "target": "src/infra/pdf/extract.ts"
+    },
+    {
+      "sourceId": "domain_chunking_chunker_ts",
+      "targetId": "domain_text_normalize_ts",
+      "source": "src/domain/chunking/chunker.ts",
+      "target": "src/domain/text/normalize.ts"
+    },
+    {
+      "sourceId": "infra_pdf_extract_ts",
+      "targetId": "infra_pdf_ocrFallback_ts",
+      "source": "src/infra/pdf/extract.ts",
+      "target": "src/infra/pdf/ocrFallback.ts"
+    },
+    {
+      "sourceId": "infra_pdf_ocrFallback_ts",
+      "targetId": "infra_pdf_tesseractEngine_ts",
+      "source": "src/infra/pdf/ocrFallback.ts",
+      "target": "src/infra/pdf/tesseractEngine.ts"
+    },
+    {
+      "sourceId": "main_tsx",
+      "targetId": "App_tsx",
+      "source": "src/main.tsx",
+      "target": "src/App.tsx"
+    },
+    {
+      "sourceId": "main_tsx",
+      "targetId": "index_css",
+      "source": "src/main.tsx",
+      "target": "src/index.css"
+    }
+  ]
+}
