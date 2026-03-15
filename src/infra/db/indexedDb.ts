@@ -145,6 +145,13 @@ export class PlanScribeDb {
     return pages.sort((a, b) => a.pageNumber - b.pageNumber);
   }
 
+  async listPages(): Promise<PageRecord[]> {
+    const db = await this.getDb();
+    const tx = db.transaction(PAGE_STORE, "readonly");
+    const store = tx.objectStore(PAGE_STORE);
+    return requestToPromise(store.getAll() as IDBRequest<PageRecord[]>);
+  }
+
   async deleteDocument(documentId: string): Promise<void> {
     const db = await this.getDb();
     const tx = db.transaction([DOC_STORE, PAGE_STORE, CHUNK_STORE, EMBEDDING_STORE], "readwrite");

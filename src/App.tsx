@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import "./App.css";
+import { buildAuditExportPackage } from "./domain/extraction/auditExport";
 import {
   extractStructuredProvisions,
   type StructuredExtraction,
+  type StructuredExtractionResult,
 } from "./domain/extraction/structured";
 import { answerQuestionGrounded, type GroundedAnswer } from "./domain/qa/grounded";
 import { hybridSearch } from "./domain/retrieval/hybrid";
@@ -32,6 +34,7 @@ function App() {
   const [embeddings, setEmbeddings] = useState<EmbeddingRecord[]>([]);
   const [selectedDocumentId, setSelectedDocumentId] = useState<string | null>(null);
   const [highlightedPageNumber, setHighlightedPageNumber] = useState<number | null>(null);
+  const [allPages, setAllPages] = useState<PageRecord[]>([]);
   const [pages, setPages] = useState<PageRecord[]>([]);
   const [query, setQuery] = useState("");
   const [question, setQuestion] = useState("");
@@ -39,7 +42,9 @@ function App() {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [answer, setAnswer] = useState<GroundedAnswer | null>(null);
   const [extraction, setExtraction] = useState<StructuredExtraction | null>(null);
+  const [extractionResult, setExtractionResult] = useState<StructuredExtractionResult | null>(null);
   const [extractionErrors, setExtractionErrors] = useState<string[]>([]);
+  const [extractionWarnings, setExtractionWarnings] = useState<string[]>([]);
   const [extractionJson, setExtractionJson] = useState("");
   const [state, setState] = useState<AsyncState>("idle");
   const [statusMessage, setStatusMessage] = useState("Ready");
@@ -50,14 +55,16 @@ function App() {
   );
 
   const refreshCorpus = useCallback(async () => {
-    const [nextDocuments, nextChunks, nextEmbeddings] = await Promise.all([
+    const [nextDocuments, nextChunks, nextEmbeddings, nextPages] = await Promise.all([
       db.listDocuments(),
       db.listChunks(),
       db.listEmbeddings(),
+      db.listPages(),
     ]);
     setDocuments(nextDocuments);
     setChunks(nextChunks);
     setEmbeddings(nextEmbeddings);
+    setAllPages(nextPages);
   }, [db]);
 
   useEffect(() => {
@@ -160,7 +167,9 @@ function App() {
       setResults([]);
       setAnswer(null);
       setExtraction(null);
+      setExtractionResult(null);
       setExtractionErrors([]);
+      setExtractionWarnings([]);
       setExtractionJson("");
       await refreshCorpus();
       setStatusMessage("All local IndexedDB data deleted.");
@@ -196,7 +205,9 @@ function App() {
   function handleRunExtraction() {
     const extractionResult = extractStructuredProvisions(chunks, embeddings);
     setExtraction(extractionResult.extraction);
+    setExtractionResult(extractionResult);
     setExtractionErrors(extractionResult.validationErrors);
+    setExtractionWarnings(extractionResult.warnings);
     setExtractionJson(JSON.stringify(extractionResult.extraction, null, 2));
 
     const dedupedEvidence = Array.from(
@@ -207,7 +218,7 @@ function App() {
     setStatusMessage(
       `Structured extraction complete. Fields with citations: ${
         Object.values(extractionResult.extraction.fields).filter((field) => field.citation).length
-      }/3. Validation errors: ${extractionResult.validationErrors.length}.`,
+      }/3. Validation errors: ${extractionResult.validationErrors.length}. Warnings: ${extractionResult.warnings.length}.`,
     );
   }
 
@@ -226,6 +237,31 @@ function App() {
     URL.revokeObjectURL(url);
 
     setStatusMessage("Extraction JSON exported.");
+  }
+
+  function handleExportAuditPackage() {
+    if (!extractionResult) {
+      return;
+    }
+
+    const auditPackage = buildAuditExportPackage({
+      extractionResult,
+      documents,
+      pages: allPages,
+      chunkCount: chunks.length,
+      embeddings,
+    });
+
+    const payload = JSON.stringify(auditPackage, null, 2);
+    const blob = new Blob([payload], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `planscribe-audit-package-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+
+    setStatusMessage("Audit package exported.");
   }
 
   return (
@@ -328,6 +364,9 @@ function App() {
           <button onClick={handleExportExtractionJson} disabled={!extraction}>
             Export JSON
           </button>
+          <button onClick={handleExportAuditPackage} disabled={!extractionResult}>
+            Export Audit Package
+          </button>
         </div>
         {extraction ? (
           <div className="extraction-grid">
@@ -410,6 +449,17 @@ function App() {
         ) : (
           <p>No validation errors.</p>
         )}
+
+        <h3>Warnings</h3>
+        {extractionWarnings.length > 0 ? (
+          <ul className="warnings">
+            {extractionWarnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
+        ) : (
+          <p>No extraction warnings.</p>
+        )}
       </section>
 
       <section className="panel">
@@ -457,6 +507,9 @@ function App() {
                 className={page.pageNumber === highlightedPageNumber ? "page-highlight" : undefined}
               >
                 <h3>Page {page.pageNumber}</h3>
+                <small>
+                  source={page.textSource ?? "pdf_text"} | ocrApplied={page.ocrApplied ? "yes" : "no"}
+                </small>
                 <p>{page.text.slice(0, 1500) || "(empty)"}</p>
               </article>
             ))}

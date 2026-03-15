@@ -49,6 +49,8 @@ export function buildIngestionArtifacts(input: {
     documentId: input.documentId,
     pageNumber: page.pageNumber,
     text: normalizeText(page.text),
+    textSource: page.textSource ?? "pdf_text",
+    ocrApplied: page.ocrApplied ?? false,
   }));
 
   const chunks = createChunks(

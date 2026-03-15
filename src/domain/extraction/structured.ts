@@ -1,10 +1,14 @@
 import { hybridSearch } from "../retrieval/hybrid";
 import type { ChunkRecord, Citation, EmbeddingRecord, SearchResult } from "../types";
 
+const MIN_CONFIDENCE = 0.35;
+
 export interface ExtractedProvisionField {
   value: string | null;
   confidence: number;
   citation: Citation | null;
+  status: "extracted" | "insufficient_evidence";
+  reason?: string;
 }
 
 export interface StructuredExtraction {
@@ -21,6 +25,12 @@ export interface StructuredExtractionResult {
   extraction: StructuredExtraction;
   validationErrors: string[];
   supportingEvidence: SearchResult[];
+  fieldTraces: Array<{
+    fieldName: keyof StructuredExtraction["fields"];
+    query: string;
+    evidence: SearchResult[];
+  }>;
+  warnings: string[];
 }
 
 function normalizeFieldValue(snippet: string): string {
@@ -31,7 +41,7 @@ function pickField(
   query: string,
   chunks: ChunkRecord[],
   embeddings: EmbeddingRecord[],
-): { field: ExtractedProvisionField; evidence: SearchResult[] } {
+): { field: ExtractedProvisionField; evidence: SearchResult[]; warning?: string } {
   const results = hybridSearch(query, chunks, embeddings, { limit: 3 });
   const best = results[0];
   if (!best) {
@@ -40,16 +50,35 @@ function pickField(
         value: null,
         confidence: 0,
         citation: null,
+        status: "insufficient_evidence",
+        reason: "No supporting evidence found.",
       },
       evidence: [],
+      warning: `No evidence found for query: "${query}"`,
+    };
+  }
+
+  const confidence = Number(best.score.toFixed(4));
+  if (confidence < MIN_CONFIDENCE) {
+    return {
+      field: {
+        value: null,
+        confidence,
+        citation: null,
+        status: "insufficient_evidence",
+        reason: `Top evidence score ${confidence} below threshold ${MIN_CONFIDENCE}.`,
+      },
+      evidence: results,
+      warning: `Insufficient evidence confidence for query: "${query}"`,
     };
   }
 
   return {
     field: {
       value: normalizeFieldValue(best.snippet),
-      confidence: Number(best.score.toFixed(4)),
+      confidence,
       citation: best.citation,
+      status: "extracted",
     },
     evidence: results,
   };
@@ -74,6 +103,14 @@ export function validateStructuredExtraction(extraction: StructuredExtraction): 
       errors.push(`${name} has value but missing citation`);
     }
 
+    if (field.status === "extracted" && !field.value) {
+      errors.push(`${name} marked extracted but has no value`);
+    }
+
+    if (field.status === "insufficient_evidence" && field.value) {
+      errors.push(`${name} marked insufficient evidence but has a value`);
+    }
+
     if (field.confidence < 0 || field.confidence > 1) {
       errors.push(`${name} confidence must be between 0 and 1`);
     }
@@ -89,6 +126,9 @@ export function extractStructuredProvisions(
   const normalRetirement = pickField("normal retirement age", chunks, embeddings);
   const earlyRetirement = pickField("early retirement reduction", chunks, embeddings);
   const vesting = pickField("vesting schedule cliff graded vesting", chunks, embeddings);
+  const warnings = [normalRetirement.warning, earlyRetirement.warning, vesting.warning].filter(
+    (warning): warning is string => Boolean(warning),
+  );
 
   const extraction: StructuredExtraction = {
     schemaVersion: "1.0",
@@ -102,10 +142,29 @@ export function extractStructuredProvisions(
 
   const validationErrors = validateStructuredExtraction(extraction);
   const supportingEvidence = [...normalRetirement.evidence, ...earlyRetirement.evidence, ...vesting.evidence];
+  const fieldTraces: StructuredExtractionResult["fieldTraces"] = [
+    {
+      fieldName: "normalRetirementAge",
+      query: "normal retirement age",
+      evidence: normalRetirement.evidence,
+    },
+    {
+      fieldName: "earlyRetirementReduction",
+      query: "early retirement reduction",
+      evidence: earlyRetirement.evidence,
+    },
+    {
+      fieldName: "vestingSchedule",
+      query: "vesting schedule cliff graded vesting",
+      evidence: vesting.evidence,
+    },
+  ];
 
   return {
     extraction,
     validationErrors,
     supportingEvidence,
+    fieldTraces,
+    warnings,
   };
 }
