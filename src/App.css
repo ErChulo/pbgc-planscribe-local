@@ -105,6 +105,31 @@ button {
   padding-left: 0.75rem;
 }
 
+.extraction-actions {
+  margin-top: 0.75rem;
+}
+
+.extraction-grid {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.json-output {
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 0.75rem;
+  overflow: auto;
+  max-height: 280px;
+}
+
+.errors {
+  margin: 0;
+  padding-left: 1.25rem;
+  color: #991b1b;
+}
+
 .pages {
   display: grid;
   gap: 0.75rem;
