@@ -1,0 +1,42 @@
+export interface DocumentRecord {
+  id: string;
+  filename: string;
+  sha256: string;
+  importedAt: string;
+  pageCount: number;
+}
+
+export interface PageRecord {
+  id: string;
+  documentId: string;
+  pageNumber: number;
+  text: string;
+}
+
+export interface ChunkRecord {
+  id: string;
+  documentId: string;
+  pageStart: number;
+  pageEnd: number;
+  text: string;
+}
+
+export interface ExtractedPage {
+  pageNumber: number;
+  text: string;
+}
+
+export interface Citation {
+  documentId: string;
+  page: number;
+  chunkId: string;
+}
+
+export interface SearchResult {
+  chunkId: string;
+  documentId: string;
+  score: number;
+  snippet: string;
+  citation: Citation;
+}
+
