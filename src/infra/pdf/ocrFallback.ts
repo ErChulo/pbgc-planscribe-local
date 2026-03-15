@@ -1,3 +1,5 @@
+import { recognizeCanvasText } from "./tesseractEngine";
+
 type RenderablePdfPage = {
   getViewport: (options: { scale: number }) => { width: number; height: number };
   render: (options: {
@@ -6,22 +8,6 @@ type RenderablePdfPage = {
     viewport: { width: number; height: number };
   }) => { promise: Promise<unknown> };
 };
-
-interface TesseractLikeResult {
-  data?: {
-    text?: string;
-  };
-}
-
-interface TesseractLike {
-  recognize: (image: HTMLCanvasElement, language: string) => Promise<TesseractLikeResult>;
-}
-
-declare global {
-  interface Window {
-    Tesseract?: TesseractLike;
-  }
-}
 
 function normalizeOcrText(input: string): string {
   return input.replace(/\s+/g, " ").trim();
@@ -44,13 +30,11 @@ function toRenderablePdfPage(page: unknown): RenderablePdfPage | null {
   return candidate as RenderablePdfPage;
 }
 
-export async function extractPageTextWithOcrFallback(page: unknown): Promise<string> {
+export async function extractPageTextWithOcrFallback(
+  page: unknown,
+  onProgress?: (progress: number) => void,
+): Promise<string> {
   if (typeof window === "undefined" || typeof document === "undefined") {
-    return "";
-  }
-
-  const tesseract = window.Tesseract;
-  if (!tesseract) {
     return "";
   }
 
@@ -71,8 +55,8 @@ export async function extractPageTextWithOcrFallback(page: unknown): Promise<str
   await renderablePage.render({ canvasContext: context, canvas, viewport }).promise;
 
   try {
-    const result = await tesseract.recognize(canvas, "eng");
-    return normalizeOcrText(result.data?.text ?? "");
+    const text = await recognizeCanvasText(canvas, onProgress);
+    return normalizeOcrText(text);
   } catch {
     return "";
   }

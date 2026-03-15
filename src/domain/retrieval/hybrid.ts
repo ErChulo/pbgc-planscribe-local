@@ -6,6 +6,7 @@ interface HybridOptions {
   lexicalWeight?: number;
   vectorWeight?: number;
   limit?: number;
+  maxVectorCandidates?: number;
 }
 
 function buildSnippet(text: string, query: string): string {
@@ -34,6 +35,7 @@ export function hybridSearch(
   const lexicalWeight = options.lexicalWeight ?? 0.55;
   const vectorWeight = options.vectorWeight ?? 0.45;
   const limit = options.limit ?? 25;
+  const maxVectorCandidates = options.maxVectorCandidates ?? 400;
 
   if (!query.trim()) {
     return [];
@@ -45,16 +47,24 @@ export function hybridSearch(
   const lexicalScoreByChunk = new Map(lexical.map((item) => [item.chunkId, item.score]));
 
   const queryVector = embedTextLocally(query);
-  const vectorScoreByChunk = new Map<string, number>();
+  const vectorScores: Array<{ chunkId: string; score: number }> = [];
   let maxVector = 0;
 
   for (const embedding of embeddings) {
     const score = Math.max(0, cosineSimilarity(queryVector, embedding.vector));
-    vectorScoreByChunk.set(embedding.chunkId, score);
+    if (score <= 0) {
+      continue;
+    }
+    vectorScores.push({ chunkId: embedding.chunkId, score });
     if (score > maxVector) {
       maxVector = score;
     }
   }
+
+  vectorScores.sort((a, b) => b.score - a.score);
+  const vectorScoreByChunk = new Map(
+    vectorScores.slice(0, maxVectorCandidates).map((entry) => [entry.chunkId, entry.score]),
+  );
 
   const candidateChunkIds = new Set<string>([
     ...Array.from(lexicalScoreByChunk.keys()),

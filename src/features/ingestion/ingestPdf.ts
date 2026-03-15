@@ -4,6 +4,7 @@ import { normalizeText } from "../../domain/text/normalize";
 import type { DocumentRecord, PageRecord } from "../../domain/types";
 import { PlanScribeDb } from "../../infra/db/indexedDb";
 import type { ExtractedPage } from "../../domain/types";
+import type { ExtractProgressEvent } from "../../infra/pdf/extract";
 
 export class DuplicateDocumentError extends Error {
   readonly existingDocument: DocumentRecord;
@@ -27,6 +28,10 @@ export interface IngestionSummary {
   document: DocumentRecord;
   pageCount: number;
   chunkCount: number;
+}
+
+export interface IngestionOptions {
+  onProgress?: (event: ExtractProgressEvent) => void;
 }
 
 export function buildIngestionArtifacts(input: {
@@ -67,6 +72,7 @@ export function buildIngestionArtifacts(input: {
 export async function ingestPdfFile(
   db: PlanScribeDb,
   file: File,
+  options: IngestionOptions = {},
 ): Promise<IngestionSummary> {
   const { extractPdfPages } = await import("../../infra/pdf/extract");
   const fileBuffer = await file.arrayBuffer();
@@ -75,7 +81,9 @@ export async function ingestPdfFile(
   if (existingDocument) {
     throw new DuplicateDocumentError(existingDocument);
   }
-  const extractedPages = await extractPdfPages(fileBuffer);
+  const extractedPages = await extractPdfPages(fileBuffer, {
+    onProgress: options.onProgress,
+  });
 
   const documentId = crypto.randomUUID();
   const { document, pages, chunkCount } = buildIngestionArtifacts({
