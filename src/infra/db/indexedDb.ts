@@ -1,12 +1,19 @@
-import type { ChunkRecord, DocumentRecord, EmbeddingRecord, PageRecord } from "../../domain/types";
+import type {
+  ChunkRecord,
+  DocumentRecord,
+  EmbeddingRecord,
+  ExtractionRunRecord,
+  PageRecord,
+} from "../../domain/types";
 
 const DB_NAME = "planscribe-local-db";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 
 const DOC_STORE = "documents";
 const PAGE_STORE = "pages";
 const CHUNK_STORE = "chunks";
 const EMBEDDING_STORE = "embeddings";
+const EXTRACTION_RUN_STORE = "extraction_runs";
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -67,6 +74,13 @@ export class PlanScribeDb {
         if (!embeddings.indexNames.contains("by_chunkId")) {
           embeddings.createIndex("by_chunkId", "chunkId", { unique: true });
         }
+
+        const extractionRuns = db.objectStoreNames.contains(EXTRACTION_RUN_STORE)
+          ? openRequest.transaction!.objectStore(EXTRACTION_RUN_STORE)
+          : db.createObjectStore(EXTRACTION_RUN_STORE, { keyPath: "id" });
+        if (!extractionRuns.indexNames.contains("by_createdAt")) {
+          extractionRuns.createIndex("by_createdAt", "createdAt", { unique: false });
+        }
       };
 
       openRequest.onsuccess = () => resolve(openRequest.result);
@@ -123,6 +137,26 @@ export class PlanScribeDb {
     const tx = db.transaction(EMBEDDING_STORE, "readonly");
     const store = tx.objectStore(EMBEDDING_STORE);
     return requestToPromise(store.getAll() as IDBRequest<EmbeddingRecord[]>);
+  }
+
+  async putExtractionRun(run: ExtractionRunRecord): Promise<void> {
+    const db = await this.getDb();
+    const tx = db.transaction(EXTRACTION_RUN_STORE, "readwrite");
+    tx.objectStore(EXTRACTION_RUN_STORE).put(run);
+
+    await new Promise<void>((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  }
+
+  async listExtractionRuns(): Promise<ExtractionRunRecord[]> {
+    const db = await this.getDb();
+    const tx = db.transaction(EXTRACTION_RUN_STORE, "readonly");
+    const store = tx.objectStore(EXTRACTION_RUN_STORE);
+    const runs = await requestToPromise(store.getAll() as IDBRequest<ExtractionRunRecord[]>);
+    return runs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
   async findDocumentBySha256(sha256: string): Promise<DocumentRecord | null> {
@@ -194,11 +228,15 @@ export class PlanScribeDb {
 
   async clearAll(): Promise<void> {
     const db = await this.getDb();
-    const tx = db.transaction([DOC_STORE, PAGE_STORE, CHUNK_STORE, EMBEDDING_STORE], "readwrite");
+    const tx = db.transaction(
+      [DOC_STORE, PAGE_STORE, CHUNK_STORE, EMBEDDING_STORE, EXTRACTION_RUN_STORE],
+      "readwrite",
+    );
     tx.objectStore(DOC_STORE).clear();
     tx.objectStore(PAGE_STORE).clear();
     tx.objectStore(CHUNK_STORE).clear();
     tx.objectStore(EMBEDDING_STORE).clear();
+    tx.objectStore(EXTRACTION_RUN_STORE).clear();
 
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve();

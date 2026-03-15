@@ -8,6 +8,8 @@
     "build": "tsc -b && vite build",
     "build:single": "npm run build && node scripts/inline-dist.mjs",
     "package:release": "npm run build && node scripts/package-release.mjs",
+    "package:release:ci": "npm run build && RELEASE_DIR_NAME=planscribe-local-release node scripts/package-release.mjs",
+    "check:deps": "npm audit --audit-level=high",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run"

@@ -1,0 +1,32 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+      - run: npm ci
+      - run: npm run package:release:ci
+      - run: |
+          cd release/planscribe-local-release
+          zip -r ../planscribe-local-release.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: planscribe-local-release
+          path: release/planscribe-local-release
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/planscribe-local-release.zip
+            release/planscribe-local-release/release-manifest.json
