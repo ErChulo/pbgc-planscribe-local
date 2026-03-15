@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import "./App.css";
 import { buildAuditExportPackage } from "./domain/extraction/auditExport";
+import {
+  buildWorkspaceBackupEnvelope,
+  type WorkspaceBackupEnvelope,
+  type WorkspaceSnapshot,
+  verifyWorkspaceBackupEnvelope,
+} from "./domain/backup/workspaceBackup";
 import { evaluateExtraction, evaluateRetrieval } from "./domain/eval/retrievalEval";
 import {
   buildFieldReviewCsv,
@@ -51,6 +57,7 @@ function App() {
   const [activeWorkspaceId, setActiveWorkspaceId] = useState("default-workspace");
   const [newWorkspaceName, setNewWorkspaceName] = useState("");
   const [templateId, setTemplateId] = useState<ExtractionTemplateId>("core-pension-v1");
+  const [backupImportMode, setBackupImportMode] = useState<"merge" | "replace">("merge");
 
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [chunks, setChunks] = useState<ChunkRecord[]>([]);
@@ -147,6 +154,104 @@ function App() {
     anchor.download = filename;
     anchor.click();
     URL.revokeObjectURL(url);
+  }
+
+  async function readJsonFile(file: File): Promise<unknown> {
+    const text = await file.text();
+    return JSON.parse(text) as unknown;
+  }
+
+  async function handleExportWorkspaceBackup() {
+    const workspace = workspaces.find((item) => item.id === activeWorkspaceId);
+    if (!workspace) {
+      setStatusMessage("Cannot export backup: active workspace not found.");
+      return;
+    }
+
+    setState("working");
+    try {
+      const [snapshotDocuments, snapshotPages, snapshotChunks, snapshotEmbeddings, snapshotRuns, snapshotReviews] =
+        await Promise.all([
+          db.listDocuments(activeWorkspaceId),
+          db.listPages(activeWorkspaceId),
+          db.listChunks(activeWorkspaceId),
+          db.listEmbeddings(activeWorkspaceId),
+          db.listExtractionRuns(activeWorkspaceId),
+          db.listFieldReviews(activeWorkspaceId),
+        ]);
+
+      const snapshot: WorkspaceSnapshot = {
+        snapshotVersion: "1.0",
+        generatedAt: new Date().toISOString(),
+        workspace,
+        documents: snapshotDocuments,
+        pages: snapshotPages,
+        chunks: snapshotChunks,
+        embeddings: snapshotEmbeddings,
+        extractionRuns: snapshotRuns,
+        fieldReviews: snapshotReviews,
+      };
+      const envelope = await buildWorkspaceBackupEnvelope(snapshot);
+      const stamp = new Date().toISOString().slice(0, 19).replace(/:/g, "-");
+      downloadJson(`planscribe-workspace-backup-${workspace.id}-${stamp}.json`, envelope);
+      setStatusMessage(
+        `Workspace backup exported. Hash: ${envelope.manifest.snapshotSha256.slice(0, 16)}...`,
+      );
+    } finally {
+      setState("idle");
+    }
+  }
+
+  async function handleImportWorkspaceBackup(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    setState("working");
+    try {
+      const parsed = (await readJsonFile(file)) as WorkspaceBackupEnvelope;
+      const verification = await verifyWorkspaceBackupEnvelope(parsed);
+      if (!verification.valid) {
+        setStatusMessage(`Backup verification failed: ${verification.reason ?? "unknown error"}`);
+        return;
+      }
+
+      if (backupImportMode === "replace") {
+        const confirmed = window.confirm(
+          `Replace existing data in workspace "${parsed.snapshot.workspace.name}" before restore?`,
+        );
+        if (!confirmed) {
+          setStatusMessage("Restore cancelled.");
+          return;
+        }
+      }
+
+      await db.importWorkspaceSnapshot(parsed.snapshot, { mode: backupImportMode });
+      setActiveWorkspaceId(parsed.snapshot.workspace.id);
+      setSelectedRunId(null);
+      setSelectedDocumentId(null);
+      setHighlightedPageNumber(null);
+      setPages([]);
+      setResults([]);
+      setAnswer(null);
+      setExtraction(null);
+      setExtractionResult(null);
+      setExtractionErrors([]);
+      setExtractionWarnings([]);
+      setExtractionJson("");
+      await refreshCorpus();
+
+      setStatusMessage(
+        `Workspace backup restored (${backupImportMode}) for "${parsed.snapshot.workspace.name}".`,
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "Unknown restore error";
+      setStatusMessage(`Backup restore failed: ${detail}`);
+    } finally {
+      setState("idle");
+      event.target.value = "";
+    }
   }
 
   async function handleCreateWorkspace() {
@@ -559,6 +664,30 @@ function App() {
             onChange={(event) => setNewWorkspaceName(event.target.value)}
           />
           <button onClick={() => void handleCreateWorkspace()}>Create Workspace</button>
+        </div>
+      </section>
+
+      <section className="panel">
+        <h2>Backup & Restore</h2>
+        <p>Export/import signed workspace backups with SHA-256 integrity verification.</p>
+        <div className="actions">
+          <button onClick={() => void handleExportWorkspaceBackup()} disabled={state === "working"}>
+            Export Active Workspace Backup
+          </button>
+          <select
+            value={backupImportMode}
+            onChange={(event) => setBackupImportMode(event.target.value as "merge" | "replace")}
+            disabled={state === "working"}
+          >
+            <option value="merge">Restore Mode: Merge</option>
+            <option value="replace">Restore Mode: Replace Workspace Data</option>
+          </select>
+          <input
+            type="file"
+            accept="application/json"
+            onChange={handleImportWorkspaceBackup}
+            disabled={state === "working"}
+          />
         </div>
       </section>
 

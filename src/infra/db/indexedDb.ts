@@ -7,6 +7,7 @@ import type {
   PageRecord,
   WorkspaceRecord,
 } from "../../domain/types";
+import type { WorkspaceSnapshot } from "../../domain/backup/workspaceBackup";
 
 const DB_NAME = "planscribe-local-db";
 const DB_VERSION = 5;
@@ -26,6 +27,14 @@ function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
+  });
+}
+
+function transactionDone(tx: IDBTransaction): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
   });
 }
 
@@ -153,11 +162,7 @@ export class PlanScribeDb {
       tx.objectStore(EMBEDDING_STORE).put(embedding);
     }
 
-    await new Promise<void>((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
-    });
+    await transactionDone(tx);
   }
 
   async listWorkspaces(): Promise<WorkspaceRecord[]> {
@@ -178,11 +183,7 @@ export class PlanScribeDb {
     const db = await this.getDb();
     const tx = db.transaction(WORKSPACE_STORE, "readwrite");
     tx.objectStore(WORKSPACE_STORE).put(workspace);
-    await new Promise<void>((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
-    });
+    await transactionDone(tx);
     return workspace;
   }
 
@@ -216,12 +217,7 @@ export class PlanScribeDb {
     const db = await this.getDb();
     const tx = db.transaction(EXTRACTION_RUN_STORE, "readwrite");
     tx.objectStore(EXTRACTION_RUN_STORE).put(run);
-
-    await new Promise<void>((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
-    });
+    await transactionDone(tx);
   }
 
   async listExtractionRuns(workspaceId = DEFAULT_WORKSPACE_ID): Promise<ExtractionRunRecord[]> {
@@ -238,11 +234,7 @@ export class PlanScribeDb {
     const db = await this.getDb();
     const tx = db.transaction(FIELD_REVIEW_STORE, "readwrite");
     tx.objectStore(FIELD_REVIEW_STORE).put(review);
-    await new Promise<void>((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
-    });
+    await transactionDone(tx);
   }
 
   async listFieldReviewsForRun(extractionRunId: string): Promise<FieldReviewRecord[]> {
@@ -251,6 +243,16 @@ export class PlanScribeDb {
     const index = tx.objectStore(FIELD_REVIEW_STORE).index("by_extractionRunId");
     const reviews = await requestToPromise(
       index.getAll(IDBKeyRange.only(extractionRunId)) as IDBRequest<FieldReviewRecord[]>,
+    );
+    return reviews.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  async listFieldReviews(workspaceId = DEFAULT_WORKSPACE_ID): Promise<FieldReviewRecord[]> {
+    const db = await this.getDb();
+    const tx = db.transaction(FIELD_REVIEW_STORE, "readonly");
+    const index = tx.objectStore(FIELD_REVIEW_STORE).index("by_workspaceId");
+    const reviews = await requestToPromise(
+      index.getAll(IDBKeyRange.only(workspaceId)) as IDBRequest<FieldReviewRecord[]>,
     );
     return reviews.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
@@ -315,11 +317,93 @@ export class PlanScribeDb {
       deleteByIndex(EMBEDDING_STORE, "by_documentId", documentId),
     ]);
 
-    await new Promise<void>((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
+    await transactionDone(tx);
+  }
+
+  private deleteByWorkspaceId(
+    tx: IDBTransaction,
+    storeName: string,
+    workspaceId: string,
+  ): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const store = tx.objectStore(storeName);
+      const index = store.index("by_workspaceId");
+      const cursorRequest = index.openCursor(IDBKeyRange.only(workspaceId));
+      cursorRequest.onsuccess = () => {
+        const cursor = cursorRequest.result;
+        if (!cursor) {
+          resolve();
+          return;
+        }
+        cursor.delete();
+        cursor.continue();
+      };
+      cursorRequest.onerror = () => reject(cursorRequest.error);
     });
+  }
+
+  async clearWorkspaceData(workspaceId: string): Promise<void> {
+    const db = await this.getDb();
+    const tx = db.transaction(
+      [DOC_STORE, PAGE_STORE, CHUNK_STORE, EMBEDDING_STORE, EXTRACTION_RUN_STORE, FIELD_REVIEW_STORE],
+      "readwrite",
+    );
+    await Promise.all([
+      this.deleteByWorkspaceId(tx, DOC_STORE, workspaceId),
+      this.deleteByWorkspaceId(tx, PAGE_STORE, workspaceId),
+      this.deleteByWorkspaceId(tx, CHUNK_STORE, workspaceId),
+      this.deleteByWorkspaceId(tx, EMBEDDING_STORE, workspaceId),
+      this.deleteByWorkspaceId(tx, EXTRACTION_RUN_STORE, workspaceId),
+      this.deleteByWorkspaceId(tx, FIELD_REVIEW_STORE, workspaceId),
+    ]);
+    await transactionDone(tx);
+  }
+
+  async importWorkspaceSnapshot(
+    snapshot: WorkspaceSnapshot,
+    options: { mode?: "merge" | "replace" } = {},
+  ): Promise<void> {
+    const workspaceId = snapshot.workspace.id;
+    const mode = options.mode ?? "merge";
+    if (mode === "replace") {
+      await this.clearWorkspaceData(workspaceId);
+    }
+
+    const db = await this.getDb();
+    const tx = db.transaction(
+      [
+        WORKSPACE_STORE,
+        DOC_STORE,
+        PAGE_STORE,
+        CHUNK_STORE,
+        EMBEDDING_STORE,
+        EXTRACTION_RUN_STORE,
+        FIELD_REVIEW_STORE,
+      ],
+      "readwrite",
+    );
+
+    tx.objectStore(WORKSPACE_STORE).put(snapshot.workspace);
+    for (const document of snapshot.documents) {
+      tx.objectStore(DOC_STORE).put({ ...document, workspaceId });
+    }
+    for (const page of snapshot.pages) {
+      tx.objectStore(PAGE_STORE).put({ ...page, workspaceId });
+    }
+    for (const chunk of snapshot.chunks) {
+      tx.objectStore(CHUNK_STORE).put({ ...chunk, workspaceId });
+    }
+    for (const embedding of snapshot.embeddings) {
+      tx.objectStore(EMBEDDING_STORE).put({ ...embedding, workspaceId });
+    }
+    for (const run of snapshot.extractionRuns) {
+      tx.objectStore(EXTRACTION_RUN_STORE).put({ ...run, workspaceId });
+    }
+    for (const review of snapshot.fieldReviews) {
+      tx.objectStore(FIELD_REVIEW_STORE).put({ ...review, workspaceId });
+    }
+
+    await transactionDone(tx);
   }
 
   async clearAll(): Promise<void> {
@@ -335,10 +419,6 @@ export class PlanScribeDb {
     tx.objectStore(EXTRACTION_RUN_STORE).clear();
     tx.objectStore(FIELD_REVIEW_STORE).clear();
 
-    await new Promise<void>((resolve, reject) => {
-      tx.oncomplete = () => resolve();
-      tx.onerror = () => reject(tx.error);
-      tx.onabort = () => reject(tx.error);
-    });
+    await transactionDone(tx);
   }
 }
