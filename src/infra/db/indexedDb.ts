@@ -1,11 +1,12 @@
-import type { ChunkRecord, DocumentRecord, PageRecord } from "../../domain/types";
+import type { ChunkRecord, DocumentRecord, EmbeddingRecord, PageRecord } from "../../domain/types";
 
 const DB_NAME = "planscribe-local-db";
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 
 const DOC_STORE = "documents";
 const PAGE_STORE = "pages";
 const CHUNK_STORE = "chunks";
+const EMBEDDING_STORE = "embeddings";
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -56,6 +57,16 @@ export class PlanScribeDb {
         if (!chunks.indexNames.contains("by_documentId")) {
           chunks.createIndex("by_documentId", "documentId", { unique: false });
         }
+
+        const embeddings = db.objectStoreNames.contains(EMBEDDING_STORE)
+          ? openRequest.transaction!.objectStore(EMBEDDING_STORE)
+          : db.createObjectStore(EMBEDDING_STORE, { keyPath: "id" });
+        if (!embeddings.indexNames.contains("by_documentId")) {
+          embeddings.createIndex("by_documentId", "documentId", { unique: false });
+        }
+        if (!embeddings.indexNames.contains("by_chunkId")) {
+          embeddings.createIndex("by_chunkId", "chunkId", { unique: true });
+        }
       };
 
       openRequest.onsuccess = () => resolve(openRequest.result);
@@ -69,9 +80,10 @@ export class PlanScribeDb {
     document: DocumentRecord,
     pages: PageRecord[],
     chunks: ChunkRecord[],
+    embeddings: EmbeddingRecord[] = [],
   ): Promise<void> {
     const db = await this.getDb();
-    const tx = db.transaction([DOC_STORE, PAGE_STORE, CHUNK_STORE], "readwrite");
+    const tx = db.transaction([DOC_STORE, PAGE_STORE, CHUNK_STORE, EMBEDDING_STORE], "readwrite");
 
     tx.objectStore(DOC_STORE).put(document);
     for (const page of pages) {
@@ -79,6 +91,9 @@ export class PlanScribeDb {
     }
     for (const chunk of chunks) {
       tx.objectStore(CHUNK_STORE).put(chunk);
+    }
+    for (const embedding of embeddings) {
+      tx.objectStore(EMBEDDING_STORE).put(embedding);
     }
 
     await new Promise<void>((resolve, reject) => {
@@ -103,6 +118,13 @@ export class PlanScribeDb {
     return requestToPromise(store.getAll() as IDBRequest<ChunkRecord[]>);
   }
 
+  async listEmbeddings(): Promise<EmbeddingRecord[]> {
+    const db = await this.getDb();
+    const tx = db.transaction(EMBEDDING_STORE, "readonly");
+    const store = tx.objectStore(EMBEDDING_STORE);
+    return requestToPromise(store.getAll() as IDBRequest<EmbeddingRecord[]>);
+  }
+
   async findDocumentBySha256(sha256: string): Promise<DocumentRecord | null> {
     const db = await this.getDb();
     const tx = db.transaction(DOC_STORE, "readonly");
@@ -125,7 +147,7 @@ export class PlanScribeDb {
 
   async deleteDocument(documentId: string): Promise<void> {
     const db = await this.getDb();
-    const tx = db.transaction([DOC_STORE, PAGE_STORE, CHUNK_STORE], "readwrite");
+    const tx = db.transaction([DOC_STORE, PAGE_STORE, CHUNK_STORE, EMBEDDING_STORE], "readwrite");
 
     tx.objectStore(DOC_STORE).delete(documentId);
 
@@ -153,6 +175,7 @@ export class PlanScribeDb {
     await Promise.all([
       deleteByIndex(PAGE_STORE, "by_documentId", documentId),
       deleteByIndex(CHUNK_STORE, "by_documentId", documentId),
+      deleteByIndex(EMBEDDING_STORE, "by_documentId", documentId),
     ]);
 
     await new Promise<void>((resolve, reject) => {
@@ -164,10 +187,11 @@ export class PlanScribeDb {
 
   async clearAll(): Promise<void> {
     const db = await this.getDb();
-    const tx = db.transaction([DOC_STORE, PAGE_STORE, CHUNK_STORE], "readwrite");
+    const tx = db.transaction([DOC_STORE, PAGE_STORE, CHUNK_STORE, EMBEDDING_STORE], "readwrite");
     tx.objectStore(DOC_STORE).clear();
     tx.objectStore(PAGE_STORE).clear();
     tx.objectStore(CHUNK_STORE).clear();
+    tx.objectStore(EMBEDDING_STORE).clear();
 
     await new Promise<void>((resolve, reject) => {
       tx.oncomplete = () => resolve();

@@ -1,4 +1,5 @@
 import { createChunks } from "../../domain/chunking/chunker";
+import { buildChunkEmbeddings } from "../../domain/embeddings/localEmbedder";
 import { normalizeText } from "../../domain/text/normalize";
 import type { DocumentRecord, PageRecord } from "../../domain/types";
 import { PlanScribeDb } from "../../infra/db/indexedDb";
@@ -89,8 +90,9 @@ export async function ingestPdfFile(
       text: page.text,
     })),
   );
+  const embeddings = buildChunkEmbeddings(chunks);
 
-  await db.putDocumentGraph(document, pages, chunks);
+  await db.putDocumentGraph(document, pages, chunks, embeddings);
 
   return {
     document,
