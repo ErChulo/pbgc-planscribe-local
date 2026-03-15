@@ -1,9 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import "./App.css";
+import {
+  extractStructuredProvisions,
+  type StructuredExtraction,
+} from "./domain/extraction/structured";
 import { answerQuestionGrounded, type GroundedAnswer } from "./domain/qa/grounded";
 import { hybridSearch } from "./domain/retrieval/hybrid";
 import { lexicalSearch } from "./domain/retrieval/lexical";
 import type {
+  Citation,
   ChunkRecord,
   DocumentRecord,
   EmbeddingRecord,
@@ -33,6 +38,9 @@ function App() {
   const [searchMode, setSearchMode] = useState<SearchMode>("hybrid");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [answer, setAnswer] = useState<GroundedAnswer | null>(null);
+  const [extraction, setExtraction] = useState<StructuredExtraction | null>(null);
+  const [extractionErrors, setExtractionErrors] = useState<string[]>([]);
+  const [extractionJson, setExtractionJson] = useState("");
   const [state, setState] = useState<AsyncState>("idle");
   const [statusMessage, setStatusMessage] = useState("Ready");
 
@@ -106,13 +114,17 @@ function App() {
   }
 
   async function handleOpenCitation(result: SearchResult) {
-    setSelectedDocumentId(result.citation.documentId);
-    setHighlightedPageNumber(result.citation.page);
-    const nextPages = await db.listPagesForDocument(result.citation.documentId);
-    setPages(nextPages);
+    await handleOpenCitationByRef(result.citation);
     setStatusMessage(
       `Opened citation: doc=${result.citation.documentId} page=${result.citation.page} chunk=${result.citation.chunkId}`,
     );
+  }
+
+  async function handleOpenCitationByRef(citation: Citation) {
+    setSelectedDocumentId(citation.documentId);
+    setHighlightedPageNumber(citation.page);
+    const nextPages = await db.listPagesForDocument(citation.documentId);
+    setPages(nextPages);
   }
 
   async function handleDeleteDocument(documentId: string) {
@@ -147,6 +159,9 @@ function App() {
       setPages([]);
       setResults([]);
       setAnswer(null);
+      setExtraction(null);
+      setExtractionErrors([]);
+      setExtractionJson("");
       await refreshCorpus();
       setStatusMessage("All local IndexedDB data deleted.");
     } finally {
@@ -176,6 +191,41 @@ function App() {
     setStatusMessage(
       `Grounded QA complete. Evidence chunks: ${evidence.length}. Citations returned: ${grounded.citations.length}.`,
     );
+  }
+
+  function handleRunExtraction() {
+    const extractionResult = extractStructuredProvisions(chunks, embeddings);
+    setExtraction(extractionResult.extraction);
+    setExtractionErrors(extractionResult.validationErrors);
+    setExtractionJson(JSON.stringify(extractionResult.extraction, null, 2));
+
+    const dedupedEvidence = Array.from(
+      new Map(extractionResult.supportingEvidence.map((evidence) => [evidence.chunkId, evidence])).values(),
+    ).slice(0, 25);
+    setResults(dedupedEvidence);
+
+    setStatusMessage(
+      `Structured extraction complete. Fields with citations: ${
+        Object.values(extractionResult.extraction.fields).filter((field) => field.citation).length
+      }/3. Validation errors: ${extractionResult.validationErrors.length}.`,
+    );
+  }
+
+  function handleExportExtractionJson() {
+    if (!extraction) {
+      return;
+    }
+
+    const payload = JSON.stringify(extraction, null, 2);
+    const blob = new Blob([payload], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `planscribe-extraction-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+
+    setStatusMessage("Extraction JSON exported.");
   }
 
   return (
@@ -266,6 +316,100 @@ function App() {
             </small>
           </div>
         ) : null}
+      </section>
+
+      <section className="panel">
+        <h2>Structured Extraction</h2>
+        <p>Extract key provision fields as JSON with explicit citations and schema validation.</p>
+        <div className="actions extraction-actions">
+          <button onClick={handleRunExtraction} disabled={state === "working" || chunks.length === 0}>
+            Run Extraction
+          </button>
+          <button onClick={handleExportExtractionJson} disabled={!extraction}>
+            Export JSON
+          </button>
+        </div>
+        {extraction ? (
+          <div className="extraction-grid">
+            <article className="result">
+              <h3>normalRetirementAge</h3>
+              <p>{extraction.fields.normalRetirementAge.value ?? "(not found)"}</p>
+              <small>
+                confidence={extraction.fields.normalRetirementAge.confidence}{" "}
+                {extraction.fields.normalRetirementAge.citation
+                  ? `| doc=${extraction.fields.normalRetirementAge.citation.documentId} page=${extraction.fields.normalRetirementAge.citation.page}`
+                  : "| no citation"}
+              </small>
+              {extraction.fields.normalRetirementAge.citation ? (
+                <div className="actions">
+                  <button
+                    onClick={() =>
+                      void handleOpenCitationByRef(extraction.fields.normalRetirementAge.citation as Citation)
+                    }
+                  >
+                    Open Citation
+                  </button>
+                </div>
+              ) : null}
+            </article>
+            <article className="result">
+              <h3>earlyRetirementReduction</h3>
+              <p>{extraction.fields.earlyRetirementReduction.value ?? "(not found)"}</p>
+              <small>
+                confidence={extraction.fields.earlyRetirementReduction.confidence}{" "}
+                {extraction.fields.earlyRetirementReduction.citation
+                  ? `| doc=${extraction.fields.earlyRetirementReduction.citation.documentId} page=${extraction.fields.earlyRetirementReduction.citation.page}`
+                  : "| no citation"}
+              </small>
+              {extraction.fields.earlyRetirementReduction.citation ? (
+                <div className="actions">
+                  <button
+                    onClick={() =>
+                      void handleOpenCitationByRef(extraction.fields.earlyRetirementReduction.citation as Citation)
+                    }
+                  >
+                    Open Citation
+                  </button>
+                </div>
+              ) : null}
+            </article>
+            <article className="result">
+              <h3>vestingSchedule</h3>
+              <p>{extraction.fields.vestingSchedule.value ?? "(not found)"}</p>
+              <small>
+                confidence={extraction.fields.vestingSchedule.confidence}{" "}
+                {extraction.fields.vestingSchedule.citation
+                  ? `| doc=${extraction.fields.vestingSchedule.citation.documentId} page=${extraction.fields.vestingSchedule.citation.page}`
+                  : "| no citation"}
+              </small>
+              {extraction.fields.vestingSchedule.citation ? (
+                <div className="actions">
+                  <button
+                    onClick={() =>
+                      void handleOpenCitationByRef(extraction.fields.vestingSchedule.citation as Citation)
+                    }
+                  >
+                    Open Citation
+                  </button>
+                </div>
+              ) : null}
+            </article>
+          </div>
+        ) : null}
+
+        <h3>JSON Output</h3>
+        <pre className="json-output">{extractionJson || "{ }"}</pre>
+
+        <h3>Validation</h3>
+        {extractionErrors.length > 0 ? (
+          <ul className="errors">
+            {extractionErrors.map((error) => (
+              <li key={error}>{error}</li>
+            ))}
+          </ul>
+        ) : (
+          <p>No validation errors.</p>
+        )}
       </section>
 
       <section className="panel">
