@@ -6,12 +6,30 @@ GlobalWorkerOptions.workerSrc = workerSrc;
 
 const MIN_DIRECT_TEXT_CHARS = 24;
 
-export async function extractPdfPages(pdfData: ArrayBuffer): Promise<ExtractedPage[]> {
+export interface ExtractProgressEvent {
+  pageNumber: number;
+  totalPages: number;
+  stage: "extracting_text" | "ocr_fallback";
+  ocrProgress?: number;
+}
+
+export async function extractPdfPages(
+  pdfData: ArrayBuffer,
+  options: {
+    onProgress?: (event: ExtractProgressEvent) => void;
+  } = {},
+): Promise<ExtractedPage[]> {
   const loadingTask = getDocument({ data: pdfData });
   const pdf = await loadingTask.promise;
   const pages: ExtractedPage[] = [];
 
   for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    options.onProgress?.({
+      pageNumber,
+      totalPages: pdf.numPages,
+      stage: "extracting_text",
+    });
+
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
     const textItems = content.items
@@ -25,7 +43,14 @@ export async function extractPdfPages(pdfData: ArrayBuffer): Promise<ExtractedPa
 
     if (directText.length < MIN_DIRECT_TEXT_CHARS) {
       const { extractPageTextWithOcrFallback } = await import("./ocrFallback");
-      const ocrText = await extractPageTextWithOcrFallback(page);
+      const ocrText = await extractPageTextWithOcrFallback(page, (progress) => {
+        options.onProgress?.({
+          pageNumber,
+          totalPages: pdf.numPages,
+          stage: "ocr_fallback",
+          ocrProgress: progress,
+        });
+      });
       if (ocrText) {
         text = ocrText;
         textSource = "ocr";

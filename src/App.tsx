@@ -85,10 +85,26 @@ function App() {
 
     for (const file of Array.from(files)) {
       try {
-        const summary = await ingestPdfFile(db, file);
+        const summary = await ingestPdfFile(db, file, {
+          onProgress: (event) => {
+            if (event.stage === "ocr_fallback") {
+              const percent = Math.round((event.ocrProgress ?? 0) * 100);
+              setStatusMessage(
+                `OCR fallback ${percent}% on page ${event.pageNumber}/${event.totalPages} for ${file.name}`,
+              );
+              return;
+            }
+
+            setStatusMessage(
+              `Extracting page ${event.pageNumber}/${event.totalPages} for ${file.name}...`,
+            );
+          },
+        });
         importedCount += 1;
+        const importedPages = await db.listPagesForDocument(summary.document.id);
+        const ocrCount = importedPages.filter((page) => page.ocrApplied).length;
         setStatusMessage(
-          `Imported ${summary.document.filename} (${summary.pageCount} pages, ${summary.chunkCount} chunks).`,
+          `Imported ${summary.document.filename} (${summary.pageCount} pages, ${summary.chunkCount} chunks, OCR pages: ${ocrCount}).`,
         );
       } catch (error) {
         if (error instanceof DuplicateDocumentError) {
@@ -381,13 +397,15 @@ function App() {
               </small>
               {extraction.fields.normalRetirementAge.citation ? (
                 <div className="actions">
-                  <button
-                    onClick={() =>
-                      void handleOpenCitationByRef(extraction.fields.normalRetirementAge.citation as Citation)
+                  {(() => {
+                    const citation = extraction.fields.normalRetirementAge.citation;
+                    if (!citation) {
+                      return null;
                     }
-                  >
-                    Open Citation
-                  </button>
+                    return (
+                      <button onClick={() => void handleOpenCitationByRef(citation)}>Open Citation</button>
+                    );
+                  })()}
                 </div>
               ) : null}
             </article>
@@ -402,13 +420,15 @@ function App() {
               </small>
               {extraction.fields.earlyRetirementReduction.citation ? (
                 <div className="actions">
-                  <button
-                    onClick={() =>
-                      void handleOpenCitationByRef(extraction.fields.earlyRetirementReduction.citation as Citation)
+                  {(() => {
+                    const citation = extraction.fields.earlyRetirementReduction.citation;
+                    if (!citation) {
+                      return null;
                     }
-                  >
-                    Open Citation
-                  </button>
+                    return (
+                      <button onClick={() => void handleOpenCitationByRef(citation)}>Open Citation</button>
+                    );
+                  })()}
                 </div>
               ) : null}
             </article>
@@ -423,13 +443,15 @@ function App() {
               </small>
               {extraction.fields.vestingSchedule.citation ? (
                 <div className="actions">
-                  <button
-                    onClick={() =>
-                      void handleOpenCitationByRef(extraction.fields.vestingSchedule.citation as Citation)
+                  {(() => {
+                    const citation = extraction.fields.vestingSchedule.citation;
+                    if (!citation) {
+                      return null;
                     }
-                  >
-                    Open Citation
-                  </button>
+                    return (
+                      <button onClick={() => void handleOpenCitationByRef(citation)}>Open Citation</button>
+                    );
+                  })()}
                 </div>
               ) : null}
             </article>
