@@ -1,0 +1,19 @@
+{
+  "entryPoints": [
+    "src"
+  ],
+  "entryPointStrategy": "expand",
+  "out": "docs/generated/api",
+  "exclude": [
+    "**/*.test.ts",
+    "**/*.spec.ts",
+    "**/*.d.ts"
+  ],
+  "excludePrivate": true,
+  "excludeProtected": false,
+  "readme": "none",
+  "plugin": [],
+  "sort": [
+    "source-order"
+  ]
+}
